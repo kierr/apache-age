@@ -23,23 +23,42 @@ module ApacheAge
 
     class ParseError < StandardError; end
 
-    # Parse a complete agtype string and return the typed Ruby value.
-    # Returns nil for empty/nil input.
-    sig { params(input: T.nilable(String)).returns(T.untyped) }
-    def self.parse(input)
-      return nil if input.nil?
-      return nil if input.strip.empty?
+    # RATIONALE: Depth limit prevents stack overflow on deeply nested input.
+    # Default 100 matches JSON parsers like Oj and yajl. Configurable for
+    # callers with legitimate deep-nesting needs. Would need a proven use case
+    # beyond 100 to raise the default.
+    DEFAULT_MAX_DEPTH = 100
 
-      parser = new(input.strip)
-      result = parser.parse_agtype
-      parser.expect_eof
-      result
+    class << self
+      extend T::Sig
+
+      # Maximum nesting depth for objects and arrays. Raise ParseError when exceeded.
+      sig { returns(Integer) }
+      attr_accessor :max_depth
+
+      # Parse a complete agtype string and return the typed Ruby value.
+      # Returns nil for empty/nil input.
+      sig { params(input: T.nilable(String)).returns(T.untyped) }
+      def parse(input)
+        return nil if input.nil?
+
+        stripped = input.strip
+        return nil if stripped.empty?
+
+        parser = new(stripped)
+        result = parser.parse_agtype
+        parser.expect_eof
+        result
+      end
     end
+
+    @max_depth = DEFAULT_MAX_DEPTH
 
     sig { params(input: String).void }
     def initialize(input)
       @input = input
       @pos = 0
+      @depth = 0
     end
 
     sig { returns(T.untyped) }
@@ -117,7 +136,12 @@ module ApacheAge
       num_text = +''
       has_leading_zero = false
 
-      num_text << advance if peek == '-'
+      # RATIONALE: After consuming '-', we must see at least one digit.
+      # The old code silently produced 0 for bare '-' with no digit following.
+      if peek == '-'
+        num_text << advance
+        raise ParseError, "Expected digit after '-' at position #{@pos}" unless peek && digit?(peek)
+      end
 
       # Integer part — Agtype.g4: '0' | [1-9][0-9]*
       if peek == '0'
@@ -171,6 +195,7 @@ module ApacheAge
 
     sig { returns(T::Hash[String, T.untyped]) }
     def parse_object
+      check_depth
       advance # consume {
       skip_whitespace
 
@@ -189,6 +214,7 @@ module ApacheAge
       end
 
       advance # consume }
+      @depth -= 1
       obj
     end
 
@@ -205,6 +231,7 @@ module ApacheAge
 
     sig { returns(T::Array[T.untyped]) }
     def parse_array
+      check_depth
       advance # consume [
       skip_whitespace
 
@@ -221,6 +248,7 @@ module ApacheAge
       end
 
       advance # consume ]
+      @depth -= 1
       arr
     end
 
@@ -229,7 +257,7 @@ module ApacheAge
       advance # first :
       advance # second :
       ident = +''
-      while peek && (alnum?(peek) || peek == '_')
+      while peek && (ident_char?(peek))
         ident << advance
       end
       raise ParseError, "Empty type annotation at position #{@pos}" if ident.empty?
@@ -246,6 +274,14 @@ module ApacheAge
     end
 
     private
+
+    sig { void }
+    def check_depth
+      @depth += 1
+      if @depth > self.class.max_depth
+        raise ParseError, "Nesting depth exceeds #{self.class.max_depth} at position #{@pos}"
+      end
+    end
 
     # Parse a keyword (null, true, false, NaN, Infinity) with boundary check.
     # Ensures the keyword is not a prefix of a longer identifier.
@@ -267,20 +303,18 @@ module ApacheAge
         BigDecimal(value.to_s)
       when 'vertex'
         raise ParseError, "Expected Hash for ::vertex, got #{value.class}" unless value.is_a?(Hash)
-        Vertex.new(
-          id: value['id'],
-          label: value['label'],
-          properties: value['properties'] || {}
-        )
+        # RATIONALE: Field names derived from Vertex::FIELDS rather than
+        # hardcoded, so adding a field to Vertex is a single-site change.
+        kwargs = Vertex::FIELDS.each_with_object({}) do |f, h|
+          h[f] = f == :properties ? (value[f.to_s] || {}) : value[f.to_s]
+        end
+        Vertex.new(**T.unsafe(kwargs))
       when 'edge'
         raise ParseError, "Expected Hash for ::edge, got #{value.class}" unless value.is_a?(Hash)
-        Edge.new(
-          id: value['id'],
-          label: value['label'],
-          start_id: value['start_id'],
-          end_id: value['end_id'],
-          properties: value['properties'] || {}
-        )
+        kwargs = Edge::FIELDS.each_with_object({}) do |f, h|
+          h[f] = f == :properties ? (value[f.to_s] || {}) : value[f.to_s]
+        end
+        Edge.new(**T.unsafe(kwargs))
       when 'path'
         raise ParseError, "Expected Array for ::path, got #{value.class}" unless value.is_a?(Array)
         Path.new(entities: value)
@@ -371,10 +405,12 @@ module ApacheAge
       c >= '0' && c <= '9'
     end
 
+    # RATIONALE: alnum? was dead code — replaced by ident_char? which also
+    # covers underscores. Kept as alias for backward compat with any external
+    # subclasses, but all internal callers use ident_char?.
     sig { params(c: T.nilable(String)).returns(T::Boolean) }
     def alnum?(c)
-      return false if c.nil?
-      (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+      ident_char?(c)
     end
 
     # Is this character valid in an identifier? (Used for keyword boundary checks)

@@ -8,6 +8,8 @@ module ApacheAge
   # connection type. Auto-detects ActiveRecord when present; falls back to an
   # explicit PG::Connection for standalone usage.
   module Connection
+    VALID_SAVEPOINT_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
+
     class << self
       extend T::Sig
 
@@ -39,12 +41,13 @@ module ApacheAge
       end
 
       # Run a block inside a savepoint; no-op if no transaction is active.
-      sig { params(name: String, block: T.proc.returns(T.untyped)).returns(T.untyped) }
-      def with_savepoint(name, &block)
+      sig { params(name: String, blk: T.proc.returns(T.untyped)).returns(T.untyped) }
+      def with_savepoint(name, &blk)
+        validate_savepoint_name!(name)
         if active_record?
-          ar_with_savepoint(name, &block)
+          ar_with_savepoint(name, &blk)
         else
-          pg_with_savepoint(name, &block)
+          pg_with_savepoint(name, &blk)
         end
       end
 
@@ -66,28 +69,67 @@ module ApacheAge
         end
       end
 
+      # Close the standalone PG::Connection and release the reference.
+      # No-op when using ActiveRecord (the pool owns the lifecycle).
+      # After calling disconnect, pg_connection= must be called again
+      # before the next query.
       sig { void }
-      def restore_search_path
-        execute('SET search_path = "$user", public')
+      def disconnect
+        return unless @pg_connection
+
+        @pg_mutex ||= T.let(Mutex.new, T.nilable(Mutex))
+        @pg_mutex.synchronize do
+          next unless @pg_connection
+
+          begin
+            @pg_connection.close
+          rescue StandardError
+            nil
+          end
+          @pg_connection = nil
+        end
       end
 
+      # Set the standalone PG::Connection. Use this for non-AR setups.
       sig { params(conn: PG::Connection).void }
-      def set_pg_connection(conn)
-        @pg_connection = conn
+      def pg_connection=(conn)
+        @pg_mutex ||= T.let(Mutex.new, T.nilable(Mutex))
+        @pg_mutex.synchronize { @pg_connection = conn }
       end
 
       sig { returns(PG::Connection) }
       def pg_connection
-        @pg_connection || Kernel.raise(ArgumentError, "Set ApacheAge.connection = PG::Connection.new(...) or add activerecord to your Gemfile")
+        @pg_mutex ||= T.let(Mutex.new, T.nilable(Mutex))
+        @pg_mutex.synchronize do
+          @pg_connection || Kernel.raise(
+            ArgumentError,
+            'Set ApacheAge.pg_connection = PG::Connection.new(...) ' \
+            'or add activerecord to your Gemfile'
+          )
+        end
+      end
+
+      # Backward-compatible alias for pg_connection=.
+      sig { params(conn: PG::Connection).void }
+      def set_pg_connection(conn)
+        self.pg_connection = conn
       end
 
       private
 
-      sig { params(name: String, block: T.proc.returns(T.untyped)).returns(T.untyped) }
-      def ar_with_savepoint(name, &block)
+      sig { params(name: String).void }
+      def validate_savepoint_name!(name)
+        return if name.match?(VALID_SAVEPOINT_NAME)
+
+        Kernel.raise ArgumentError,
+                     "Invalid savepoint name '#{name}' — must match #{VALID_SAVEPOINT_NAME.source}"
+      end
+
+      sig { params(name: String, blk: T.proc.returns(T.untyped)).returns(T.untyped) }
+      def ar_with_savepoint(name, &blk)
         conn = ActiveRecord::Base.connection
         conn.create_savepoint(name) if conn.transaction_open?
-        yield
+        blk.call
       ensure
         if conn.transaction_open?
           begin
@@ -102,18 +144,31 @@ module ApacheAge
         end
       end
 
-      sig { params(name: String, block: T.proc.returns(T.untyped)).returns(T.untyped) }
-      def pg_with_savepoint(name, &block)
-        return yield unless transaction_open?
+      sig { params(name: String, blk: T.proc.returns(T.untyped)).returns(T.untyped) }
+      def pg_with_savepoint(name, &blk)
+        return blk.call unless transaction_open?
 
         pg_connection.exec("SAVEPOINT #{name}")
-        yield
+        blk.call
       rescue StandardError
-        pg_connection.exec("ROLLBACK TO SAVEPOINT #{name}") rescue nil
+        begin
+          pg_connection.exec("ROLLBACK TO SAVEPOINT #{name}")
+        rescue StandardError
+          nil
+        end
         raise
       ensure
-        pg_connection.exec("RELEASE SAVEPOINT #{name}") rescue nil if transaction_open?
+        if transaction_open?
+          begin
+            pg_connection.exec("RELEASE SAVEPOINT #{name}")
+          rescue StandardError
+            nil
+          end
+        end
       end
     end
   end
 end
+
+# Auto-disconnect at exit to close the standalone PG connection cleanly.
+at_exit { ApacheAge::Connection.disconnect }
