@@ -1,0 +1,168 @@
+# apache-age
+
+A Ruby driver for [Apache AGE](https://age.apache.org/), the PostgreSQL extension for graph databases.
+
+Provides agtype parsing, graph lifecycle management, Cypher query execution with parameterized statements, and Vertex/Edge/Path domain models — matching the API surface of the official Python, Node.js, Go, and JDBC drivers.
+
+## Installation
+
+```bash
+gem install apache-age
+```
+
+Or in your Gemfile:
+
+```ruby
+gem 'apache-age'
+```
+
+## Quick Start
+
+```ruby
+require 'apache-age'
+
+# Connect to PostgreSQL with AGE installed
+conn = PG.connect(dbname: 'mydb')
+
+# Prepare the connection for AGE usage
+ApacheAge.setup_connection(conn)
+
+# Create a graph
+ApacheAge.create_graph(graph_name: 'my_graph')
+
+# Execute a Cypher query
+results = ApacheAge.query_cypher(
+  'my_graph',
+  'CREATE (n:Person {name: $name, age: $age}) RETURN n',
+  columns: ['n'],
+  params: { name: 'Alice', age: 30 }
+)
+
+# Query vertices
+results = ApacheAge.query_cypher(
+  'my_graph',
+  'MATCH (n:Person) RETURN n',
+  columns: ['n']
+)
+
+results.each do |row|
+  vertex = row['n']  # => ApacheAge::Vertex
+  puts "#{vertex.label}: #{vertex.properties}"
+end
+
+# Drop a graph
+ApacheAge.drop_graph(graph_name: 'my_graph', cascade: true)
+```
+
+## API
+
+### Connection Setup
+
+```ruby
+# Prepare a PG connection for AGE (loads extension, sets search_path)
+ApacheAge.setup_connection(conn)
+
+# Or let the gem auto-detect an ActiveRecord connection
+ApacheAge.setup_connection  # uses current connection
+
+# Create the AGE extension if it doesn't exist (requires superuser)
+ApacheAge.setup_connection(conn, create_extension: true)
+```
+
+### Configuration
+
+```ruby
+ApacheAge.graph_name = 'my_graph'   # default graph for operations
+ApacheAge.logger = Logger.new($stderr)
+```
+
+### Graph Lifecycle
+
+```ruby
+ApacheAge.create_graph(graph_name: 'social_network')
+ApacheAge.graph_exists?(graph_name: 'social_network')  # => true
+ApacheAge.drop_graph(graph_name: 'social_network', cascade: false)
+```
+
+### Query Execution
+
+```ruby
+# Simple query with array columns (type defaults to agtype)
+ApacheAge.query_cypher('my_graph', 'MATCH (n) RETURN n', columns: ['n'])
+
+# With full column definition string
+ApacheAge.query_cypher('my_graph', 'MATCH (a)-[e]->(b) RETURN a, e, b',
+  columns: 'a ag_catalog.agtype, e ag_catalog.agtype, b ag_catalog.agtype')
+
+# With parameters (uses age_prepare_cypher for safe parameterized execution)
+ApacheAge.query_cypher('my_graph',
+  'MATCH (n:Person {name: $name}) RETURN n',
+  columns: ['n'],
+  params: { name: 'Alice' }
+)
+```
+
+### Agtype Parsing
+
+```ruby
+# Parse raw agtype strings
+ApacheAge.parse_agtype('42')                              # => 42
+ApacheAge.parse_agtype('"hello"')                         # => "hello"
+ApacheAge.parse_agtype('3.14::numeric')                   # => BigDecimal("3.14")
+ApacheAge.parse_agtype('{"id":1,"label":"Person",...}::vertex')  # => Vertex
+ApacheAge.parse_agtype('{"id":2,"label":"KNOWS",...}::edge')     # => Edge
+ApacheAge.parse_agtype('[...]::path')                      # => Path
+```
+
+### Domain Models
+
+```ruby
+vertex = ApacheAge::Vertex.new(id: 1, label: 'Person', properties: { 'name' => 'Alice' })
+vertex.id         # => 1
+vertex.label      # => "Person"
+vertex['name']    # => "Alice"  (delegates to properties)
+vertex.to_h       # => { "id" => 1, "label" => "Person", "properties" => {...} }
+
+edge = ApacheAge::Edge.new(id: 2, label: 'KNOWS', start_id: 1, end_id: 3, properties: {})
+edge.start_id     # => 1
+edge.end_id       # => 3
+
+path = ApacheAge::Path.new(entities: [v1, e1, v2])
+path.vertices     # => [v1, v2]
+path.edges        # => [e1]
+path.length       # => 1
+```
+
+### Utilities
+
+```ruby
+# Escape values for Cypher string interpolation
+ApacheAge.cypher_escape("it's")  # => "it''s"
+
+# Encode Ruby values as agtype literals
+ApacheAge.agtype_encode(42)              # => "42"
+ApacheAge.agtype_encode('hello')         # => '"hello"'
+ApacheAge.agtype_encode(BigDecimal('3.14'))  # => "3.14::numeric"
+ApacheAge.agtype_encode({ 'key' => 'val' })  # => '{"key": "val"}'
+```
+
+## Rails Integration
+
+The gem includes a Railtie that auto-configures the logger and graph name:
+
+```ruby
+# config/application.rb
+config.apache_age.graph_name = 'my_graph'
+```
+
+When SemanticLogger is present, the gem uses it automatically. Otherwise it falls back to the Rails logger or stdlib Logger.
+
+## Requirements
+
+- Ruby >= 3.1
+- PostgreSQL with Apache AGE extension installed
+- `pg` gem
+
+## License
+
+Apache License 2.0 — matching the Apache AGE project.

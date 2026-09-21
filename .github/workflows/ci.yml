@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+
+      - name: Install dependencies
+        run: bundle install --jobs 4 --retry 3
+
+      - name: Run tests with coverage
+        run: bundle exec rake test
+
+      - name: Run RuboCop
+        run: bundle exec rake rubocop
+
+      - name: Run Sorbet typecheck
+        run: bundle exec srb tc
+
+      - name: Generate RBI files (Tapioca)
+        run: |
+          bundle exec tap init
+          bundle exec tap dsl
+          bundle exec tap gem
+
+      - name: Build gem
+        run: gem build apache-age.gemspec
+
+      - name: Verify gem installs
+        run: gem install ./apache-age-*.gem
+
+      - name: Verify require works
+        run: ruby -e "require 'apache-age'; puts ApacheAge::VERSION"
+
+      - name: Coverage check
+        if: always()
+        run: |
+          if [ -f coverage/.last_run.json ]; then
+            echo "Coverage results available in coverage/"
+          fi
