@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
   DESC
   spec.homepage      = 'https://github.com/kierr/apache-age'
   spec.license       = 'Apache-2.0'
-  spec.required_ruby_version = '>= 3.3'
+  spec.required_ruby_version = '>= 3.1'
 
   spec.metadata = {
     'homepage_uri'    => spec.homepage,
