@@ -8,6 +8,9 @@ module ApacheAge
   #
   # Matches the Vertex model from the official Python, Go, JDBC, and
   # Node.js drivers: {id, label, properties}.
+  #
+  # RATIONALE: id is Integer (AGE graphid is int8), matching all official
+  # drivers. Would need AGE to change its graphid type to reconsider.
   class Vertex
     extend T::Sig
 
@@ -43,20 +46,14 @@ module ApacheAge
       "#<ApacheAge::Vertex id=#{@id} label=#{@label.inspect}>"
     end
 
-    # Bracket access — accepts Symbol or String for ergonomic use.
-    sig { params(key: T.any(Symbol, String)).returns(T.untyped) }
+    # Bracket access for backward compatibility with Hash-based call sites.
+    sig { params(key: Symbol).returns(T.untyped) }
     def [](key)
-      case key.to_s
-      when 'id' then @id
-      when 'label' then @label
-      when 'properties' then @properties
-      else @properties[key.to_s]
+      case key
+      when :id then @id
+      when :label then @label
+      when :properties then @properties
       end
-    end
-
-    sig { returns(T::Hash[String, T.untyped]) }
-    def to_h
-      { 'id' => @id, 'label' => @label, 'properties' => @properties }
     end
   end
 end

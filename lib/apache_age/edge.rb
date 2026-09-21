@@ -53,21 +53,16 @@ module ApacheAge
       "#<ApacheAge::Edge id=#{@id} label=#{@label.inspect} start_id=#{@start_id} end_id=#{@end_id}>"
     end
 
-    sig { params(key: T.any(Symbol, String)).returns(T.untyped) }
+    # Bracket access for backward compatibility with Hash-based call sites.
+    sig { params(key: Symbol).returns(T.untyped) }
     def [](key)
-      case key.to_s
-      when 'id' then @id
-      when 'label' then @label
-      when 'start_id' then @start_id
-      when 'end_id' then @end_id
-      when 'properties' then @properties
-      else @properties[key.to_s]
+      case key
+      when :id then @id
+      when :label then @label
+      when :start_id then @start_id
+      when :end_id then @end_id
+      when :properties then @properties
       end
-    end
-
-    sig { returns(T::Hash[String, T.untyped]) }
-    def to_h
-      { 'id' => @id, 'label' => @label, 'start_id' => @start_id, 'end_id' => @end_id, 'properties' => @properties }
     end
   end
 end

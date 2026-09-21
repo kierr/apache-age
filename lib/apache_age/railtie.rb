@@ -1,24 +1,35 @@
 # typed: strong
 # frozen_string_literal: true
 
+# Railtie auto-loads when ActiveRecord::Base is defined.
+# Non-Rails consumers never see this file.
+
+return unless defined?(ActiveRecord::Base)
+
+require 'rails/railtie'
+
 module ApacheAge
-  # Minimal Railtie — auto-configures logger and graph_name from Rails
-  # config when the gem is used in a Rails application.
-  #
-  # No ActiveRecord callbacks or session management (those are application
-  # concerns, not the driver's).
   class Railtie < Rails::Railtie
-    config.apache_age = ActiveSupport::OrderedOptions.new
-
-    initializer 'apache_age.configure' do |_app|
-      ApacheAge.graph_name = config.apache_age.graph_name if config.apache_age.graph_name
-
-      # Use SemanticLogger when available (Rails apps commonly have it),
-      # otherwise use the default stdlib Logger.
+    initializer 'apache_age.logger' do
       if defined?(SemanticLogger)
         ApacheAge.logger = SemanticLogger['ApacheAge']
-      elsif Rails.respond_to?(:logger) && Rails.logger
-        ApacheAge.logger = Rails.logger
+      end
+    end
+
+    initializer 'apache_age.connection_hooks' do
+      # Register AR connection pool callbacks for AGE session management.
+      # When AR recycles a connection, evict it from the AGE-loaded set
+      # so the next use re-initializes the AGE session.
+      ActiveSupport.on_load(:active_record) do
+        ActiveRecord::ConnectionAdapters::AbstractAdapter.set_callback(:checkout, :after) do |conn|
+          # no-op on checkout — AGE loads lazily
+        end
+
+        ActiveRecord::ConnectionAdapters::AbstractAdapter.set_callback(:checkin, :after) do |conn|
+          if conn.respond_to?(:raw_connection) && conn.raw_connection.respond_to?(:backend_pid)
+            ApacheAge.evict_age_loaded_connection(conn.raw_connection.backend_pid)
+          end
+        end
       end
     end
   end

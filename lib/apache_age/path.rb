@@ -19,11 +19,13 @@ module ApacheAge
       @entities = entities
     end
 
+    # Extract only the vertices from the path.
     sig { returns(T::Array[Vertex]) }
     def vertices
       @entities.select { |e| e.is_a?(Vertex) }
     end
 
+    # Extract only the edges from the path.
     sig { returns(T::Array[Edge]) }
     def edges
       @entities.select { |e| e.is_a?(Edge) }
