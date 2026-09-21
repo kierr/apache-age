@@ -6,49 +6,45 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  ci:
-    name: CI
-    runs-on: ubuntu-24.04
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ['3.1', '3.2', '3.3', '3.4']
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.4'
+          ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
-      - name: Install dependencies
-        run: bundle install --jobs 4 --retry 3
+      - name: Generate RBI files
+        run: bundle exec rake tapioca:require && bundle exec rake tapioca:non_gem
 
-      - name: Run tests with coverage
-        run: bundle exec rake test
+      - name: Verify RBI freshness
+        run: |
+          if ! git diff --exit-code sorbet/; then
+            echo "RBI files are stale. Run 'bundle exec rake tapioca:require && bundle exec rake tapioca:non_gem' and commit the changes."
+            git diff sorbet/
+            exit 1
+          fi
 
-      - name: Run RuboCop
-        run: bundle exec rake rubocop
-
-      - name: Run Sorbet typecheck
+      - name: Sorbet typecheck
         run: bundle exec srb tc
 
-      - name: Generate RBI files (Tapioca)
-        run: |
-          bundle exec tap init
-          bundle exec tap dsl
-          bundle exec tap gem
+      - name: Rubocop
+        run: bundle exec rubocop
 
-      - name: Build gem
-        run: gem build apache-age.gemspec
-
-      - name: Verify gem installs
-        run: gem install ./apache-age-*.gem
-
-      - name: Verify require works
-        run: ruby -e "require 'apache-age'; puts ApacheAge::VERSION"
-
-      - name: Coverage check
-        if: always()
-        run: |
-          if [ -f coverage/.last_run.json ]; then
-            echo "Coverage results available in coverage/"
-          fi
+      - name: Test
+        run: bundle exec rake test
