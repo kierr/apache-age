@@ -805,8 +805,12 @@ module ApacheAge
     # value is parsed through the full AgtypeParser into Vertex/Edge/Path/primitives.
     sig { params(rows: T::Array[T.untyped], col_names: T::Array[String]).returns(T::Array[T::Hash[String, T.untyped]]) }
     def parse_query_results(rows, col_names)
+      # RATIONALE: Row type is invariant across the result set (PG::Result
+      # always returns Hash, AR always returns Hash). Hoist the type check
+      # outside the row loop to avoid redundant is_a? per row.
+      row_is_hash = rows.first.is_a?(Hash)
       rows.map do |row|
-        hash = row.is_a?(Hash) ? row : T.cast(row, T::Hash[String, T.untyped])
+        hash = row_is_hash ? T.cast(row, T::Hash[String, T.untyped]) : T.cast(row, T::Hash[String, T.untyped])
         parsed = {}
         col_names.each do |col|
           # Use fetch with fallback to symbol key — avoids || which silently

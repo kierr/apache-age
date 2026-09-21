@@ -118,16 +118,16 @@ module ApacheAge
     sig { returns(String) }
     def parse_string
       advance # consume opening "
-      chars = []
+      buf = +''
       while peek && peek != '"'
         if peek == '\\'
-          chars << parse_escape_sequence
+          buf << parse_escape_sequence
         else
-          chars << advance
+          buf << advance
         end
       end
       advance # consume closing "
-      chars.join
+      buf
     end
 
     sig { returns(T.untyped) }
