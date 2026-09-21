@@ -9,7 +9,10 @@ module ApacheAge
   # Matches the Edge model from the official Python, Go, JDBC, and
   # Node.js drivers: {id, label, start_id, end_id, properties}.
   class Edge
+    include TypeBase
     extend T::Sig
+
+    FIELDS = T.let(%i[id label start_id end_id properties].freeze, T::Array[Symbol])
 
     sig { returns(T.nilable(Integer)) }
     attr_reader :id
@@ -53,16 +56,24 @@ module ApacheAge
       "#<ApacheAge::Edge id=#{@id} label=#{@label.inspect} start_id=#{@start_id} end_id=#{@end_id}>"
     end
 
-    # Bracket access for backward compatibility with Hash-based call sites.
-    sig { params(key: Symbol).returns(T.untyped) }
-    def [](key)
-      case key
-      when :id then @id
-      when :label then @label
-      when :start_id then @start_id
-      when :end_id then @end_id
-      when :properties then @properties
-      end
+    # Produce valid agtype for this edge, suitable for embedding in
+    # Cypher parameters or serializing back to AGE.
+    sig { returns(String) }
+    def to_agtype
+      props_enc = properties.map do |k, v|
+        "\"#{k}\": #{ApacheAge.agtype_encode(v)}"
+      end.join(', ')
+      inner = [
+        "\"id\": #{id}",
+        "\"label\": \"#{label}\"",
+        "\"start_id\": #{start_id}",
+        "\"end_id\": #{end_id}",
+        "\"properties\": {#{props_enc}}"
+      ].join(', ')
+      "{#{inner}}}::edge"
     end
+
+    # Bracket access for backward compatibility with Hash-based call sites.
+    # Inherited from TypeBase — uses FIELDS for dispatch.
   end
 end

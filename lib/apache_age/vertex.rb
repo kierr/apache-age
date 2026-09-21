@@ -12,7 +12,10 @@ module ApacheAge
   # RATIONALE: id is Integer (AGE graphid is int8), matching all official
   # drivers. Would need AGE to change its graphid type to reconsider.
   class Vertex
+    include TypeBase
     extend T::Sig
+
+    FIELDS = T.let(%i[id label properties].freeze, T::Array[Symbol])
 
     sig { returns(T.nilable(Integer)) }
     attr_reader :id
@@ -36,6 +39,7 @@ module ApacheAge
       @properties = properties
     end
 
+    # Human-readable representation.
     sig { returns(String) }
     def to_s
       "{label:#{@label}, id:#{@id}, properties:#{@properties}}::VERTEX"
@@ -46,14 +50,15 @@ module ApacheAge
       "#<ApacheAge::Vertex id=#{@id} label=#{@label.inspect}>"
     end
 
-    # Bracket access for backward compatibility with Hash-based call sites.
-    sig { params(key: Symbol).returns(T.untyped) }
-    def [](key)
-      case key
-      when :id then @id
-      when :label then @label
-      when :properties then @properties
-      end
+    # Produce valid agtype for this vertex, suitable for embedding in
+    # Cypher parameters or serializing back to AGE.
+    sig { returns(String) }
+    def to_agtype
+      props_enc = properties.map { |k, v| "\"#{k}\": #{ApacheAge.agtype_encode(v)}" }.join(', ')
+      "{\"id\": #{id}, \"label\": \"#{label}\", \"properties\": {#{props_enc}}}::vertex"
     end
+
+    # Bracket access for backward compatibility with Hash-based call sites.
+    # Inherited from TypeBase — uses FIELDS for dispatch.
   end
 end
