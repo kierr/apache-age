@@ -2,7 +2,7 @@
 
 A Ruby driver for [Apache AGE](https://age.apache.org/), the PostgreSQL extension for graph databases.
 
-Provides agtype parsing, graph lifecycle management, Cypher query execution with parameterized statements, and Vertex/Edge/Path domain models — matching the API surface of the official Python, Node.js, Go, and JDBC drivers.
+Provides agtype parsing, graph lifecycle management, Cypher query execution with parameterized statements, and Vertex/Edge/Path domain models. Matches the API surface of the official Python, Node.js, Go, and JDBC drivers.
 
 ## Installation
 
@@ -28,11 +28,12 @@ conn = PG.connect(dbname: 'mydb')
 ApacheAge.setup_connection(conn)
 
 # Create a graph
-ApacheAge.create_graph(graph_name: 'my_graph')
+ApacheAge.create_graph!(name: 'my_graph')
 
-# Execute a Cypher query
+# Execute a Cypher query (set graph_name first, or pass it inline in the cypher)
+ApacheAge.graph_name = 'my_graph'
+
 results = ApacheAge.query_cypher(
-  'my_graph',
   'CREATE (n:Person {name: $name, age: $age}) RETURN n',
   columns: ['n'],
   params: { name: 'Alice', age: 30 }
@@ -40,7 +41,6 @@ results = ApacheAge.query_cypher(
 
 # Query vertices
 results = ApacheAge.query_cypher(
-  'my_graph',
   'MATCH (n:Person) RETURN n',
   columns: ['n']
 )
@@ -51,7 +51,7 @@ results.each do |row|
 end
 
 # Drop a graph
-ApacheAge.drop_graph(graph_name: 'my_graph', cascade: true)
+ApacheAge.drop_graph!(name: 'my_graph', cascade: true)
 ```
 
 ## API
@@ -59,14 +59,14 @@ ApacheAge.drop_graph(graph_name: 'my_graph', cascade: true)
 ### Connection Setup
 
 ```ruby
-# Prepare a PG connection for AGE (loads extension, sets search_path)
+# Prepare a PG connection for AGE (loads extension, sets search_path, creates extension)
 ApacheAge.setup_connection(conn)
 
 # Or let the gem auto-detect an ActiveRecord connection
 ApacheAge.setup_connection  # uses current connection
 
-# Create the AGE extension if it doesn't exist (requires superuser)
-ApacheAge.setup_connection(conn, create_extension: true)
+# Skip automatic extension creation
+ApacheAge.setup_connection(conn, create_extension: false)
 ```
 
 ### Configuration
@@ -79,23 +79,26 @@ ApacheAge.logger = Logger.new($stderr)
 ### Graph Lifecycle
 
 ```ruby
-ApacheAge.create_graph(graph_name: 'social_network')
-ApacheAge.graph_exists?(graph_name: 'social_network')  # => true
-ApacheAge.drop_graph(graph_name: 'social_network', cascade: false)
+ApacheAge.create_graph!(name: 'social_network')
+ApacheAge.graph_exists?(name: 'social_network')  # => true
+ApacheAge.drop_graph!(name: 'social_network', cascade: false)
 ```
 
 ### Query Execution
 
 ```ruby
+# Set a default graph name for queries
+ApacheAge.graph_name = 'my_graph'
+
 # Simple query with array columns (type defaults to agtype)
-ApacheAge.query_cypher('my_graph', 'MATCH (n) RETURN n', columns: ['n'])
+ApacheAge.query_cypher('MATCH (n) RETURN n', columns: ['n'])
 
 # With full column definition string
-ApacheAge.query_cypher('my_graph', 'MATCH (a)-[e]->(b) RETURN a, e, b',
+ApacheAge.query_cypher('MATCH (a)-[e]->(b) RETURN a, e, b',
   columns: 'a ag_catalog.agtype, e ag_catalog.agtype, b ag_catalog.agtype')
 
 # With parameters (uses age_prepare_cypher for safe parameterized execution)
-ApacheAge.query_cypher('my_graph',
+ApacheAge.query_cypher(
   'MATCH (n:Person {name: $name}) RETURN n',
   columns: ['n'],
   params: { name: 'Alice' }
@@ -165,4 +168,4 @@ When SemanticLogger is present, the gem uses it automatically. Otherwise it fall
 
 ## License
 
-Apache License 2.0 — matching the Apache AGE project.
+Apache License 2.0, matching the Apache AGE project.
