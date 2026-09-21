@@ -29,22 +29,33 @@ jobs:
           ruby-version: ${{ matrix.ruby }}
           bundler-cache: true
 
+      - name: RuboCop
+        run: bundle exec rubocop
+
+      - name: Test
+        run: bundle exec rake test
+
+  typecheck:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4'
+          bundler-cache: true
+
       - name: Generate RBI files
-        run: bundle exec rake tapioca:require && bundle exec rake tapioca:non_gem
+        run: bundle exec rake sorbet:rbi
 
       - name: Verify RBI freshness
         run: |
           if ! git diff --exit-code sorbet/; then
-            echo "RBI files are stale. Run 'bundle exec rake tapioca:require && bundle exec rake tapioca:non_gem' and commit the changes."
+            echo "RBI files are stale. Run 'bundle exec rake sorbet:rbi' and commit the changes."
             git diff sorbet/
             exit 1
           fi
 
       - name: Sorbet typecheck
-        run: bundle exec srb tc
-
-      - name: Rubocop
-        run: bundle exec rubocop
-
-      - name: Test
-        run: bundle exec rake test
+        run: bundle exec rake sorbet:tc
