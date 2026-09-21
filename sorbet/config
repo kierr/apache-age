@@ -1,5 +1,9 @@
 --
 dir: "."
+# RATIONALE: Tests are excluded from strict Sorbet checking because they
+# use dynamic fixtures and Rails integration helpers that are harder to type
+# than the library code. Type coverage is tracked on lib/ only.
+# Would need test-specific RBI generation to re-enable.
 ignore:
   - vendor/bundle/**/*.rb
   - test/**/*_test.rb
