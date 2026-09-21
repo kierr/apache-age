@@ -10,12 +10,42 @@ module ApacheAge
   module Connection
     VALID_SAVEPOINT_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
+    # Connection mode determines how SQL is dispatched.
+    # :auto — detect ActiveRecord, fall back to PG (default, backward-compatible)
+    # :active_record — always use ActiveRecord::Base.connection
+    # :pg — always use the explicit PG::Connection (set via pg_connection=)
+    @connection_mode = T.let(:auto, Symbol)
+
     class << self
       extend T::Sig
 
+      sig { returns(Symbol) }
+      attr_reader :connection_mode
+
+      # Set the connection mode. Logs a diagnostic when switching from :auto
+      # to an explicit mode.
+      sig { params(mode: Symbol).void }
+      def connection_mode=(mode)
+        valid = %i[auto active_record pg]
+        unless valid.include?(mode)
+          Kernel.raise ArgumentError, "Invalid connection_mode #{mode.inspect} — must be one of #{valid.inspect}"
+        end
+        if @connection_mode == :auto && mode != :auto
+          ApacheAge.log(:info, 'age_graph.connection_mode_set',
+                        message: "Switching from :auto to :#{mode}",
+                        new_mode: mode)
+        end
+        @connection_mode = mode
+      end
+
       sig { returns(T::Boolean) }
       def active_record?
-        defined?(ActiveRecord::Base) && !@pg_connection
+        case @connection_mode
+        when :active_record then true
+        when :pg then false
+        else # :auto
+          defined?(ActiveRecord::Base) && !@pg_connection
+        end
       end
 
       # Execute SQL and return a result.

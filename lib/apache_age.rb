@@ -68,6 +68,45 @@ module ApacheAge
       @pg_mutex.synchronize { @pg_connection }
     end
 
+    # Set up the AGE extension on a connection and register it for subsequent queries.
+    # This is the primary entry point for standalone (non-ActiveRecord) usage.
+    #
+    # When +conn+ is provided, it is registered as the shared PG connection
+    # (equivalent to calling +ApacheAge.connection = conn+ first) so that
+    # subsequent +create_graph!+, +query_cypher+, etc. use this connection.
+    #
+    # WARNING: +create_extension: true+ executes CREATE EXTENSION IF NOT EXISTS age,
+    # which is a superuser-only DDL operation. For non-superuser roles, use
+    # +create_extension: false+ and ensure the extension is pre-installed.
+    sig { params(conn: T.nilable(PG::Connection), create_extension: T::Boolean).void }
+    def setup_connection(conn = nil, create_extension: true)
+      pg_conn = conn || @pg_connection
+      raise ArgumentError, 'No PG::Connection available — pass conn: or set ApacheAge.connection first' unless pg_conn
+
+      # Register the connection so subsequent queries find it
+      self.connection = pg_conn if conn
+      pg_conn = T.cast(pg_conn, PG::Connection)
+
+      begin
+        if create_extension
+          log(:info, 'age_graph.setup_connection', message: 'Installing AGE extension (requires superuser)')
+          pg_conn.exec('CREATE EXTENSION IF NOT EXISTS age')
+        end
+        pg_conn.exec("LOAD 'age'")
+        pg_conn.exec('SET search_path = ag_catalog, "$user", public')
+      rescue StandardError => e
+        # Attempt to restore search_path on failure so the connection isn't
+        # left in a half-configured state
+        begin
+          pg_conn.exec('SET search_path = "$user", public')
+        rescue StandardError
+          nil
+        end
+        raise GraphLifecycleError, "Failed to set up AGE connection: #{e.message}", e
+      end
+      log(:info, 'age_graph.setup_connection', message: 'AGE extension loaded and search_path set')
+    end
+
     # Structured logging dispatch: preserves keyword args for SemanticLogger,
     # falls back to string interpolation for stdlib Logger.
     sig { params(level: Symbol, message: String, kwargs: T.untyped).void }
@@ -100,7 +139,7 @@ module ApacheAge
       reset_graph_availability!
       log(:info, 'age_graph.created', graph_name: graph)
     rescue StandardError => e
-      raise GraphLifecycleError, "Failed to create graph '#{graph}': #{e.message}"
+      raise GraphLifecycleError, "Failed to create graph '#{graph}': #{e.message}", e
     end
 
     # Drop a graph. Raises GraphLifecycleError on failure.
@@ -121,7 +160,7 @@ module ApacheAge
       reset_graph_availability!
       log(:info, 'age_graph.dropped', graph_name: graph, cascade: cascade)
     rescue StandardError => e
-      raise GraphLifecycleError, "Failed to drop graph '#{graph}': #{e.message}"
+      raise GraphLifecycleError, "Failed to drop graph '#{graph}': #{e.message}", e
     end
 
     # Check whether a specific graph exists. Does not use the negative cache.
