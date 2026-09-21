@@ -76,7 +76,8 @@ class AgtypeParserTest < Minitest::Test
   end
 
   def test_negative_float
-    assert_in_delta(-2.5, ApacheAge::AgtypeParser.parse('-2.5'), 0.001)
+    assert_in_delta(-2.5, ApacheAge::AgtypeParser.parse('-2.5'), 0.001
+    )
   end
 
   def test_scientific_notation
@@ -348,6 +349,24 @@ class AgtypeParserTest < Minitest::Test
     assert_equal({ 'a' => { 'b' => { 'c' => { 'd' => 1 } } } }, result)
   end
 
+  # --- Depth limit ---
+
+  def test_depth_limit_exceeded
+    # Build a deeply nested structure exceeding the default depth
+    old_max = ApacheAge::AgtypeParser.max_depth
+    ApacheAge::AgtypeParser.max_depth = 5
+    input = '{"a": {"b": {"c": {"d": {"e": {"f": 1}}}}}}'
+    assert_raises(ApacheAge::AgtypeParser::ParseError) { ApacheAge::AgtypeParser.parse(input) }
+  ensure
+    ApacheAge::AgtypeParser.max_depth = old_max
+  end
+
+  # --- Bare minus raises ---
+
+  def test_bare_minus_raises
+    assert_raises(ApacheAge::AgtypeParser::ParseError) { ApacheAge::AgtypeParser.parse('-') }
+  end
+
   # --- Int64 boundary ---
 
   def test_int64_max
@@ -381,8 +400,9 @@ class ApacheAgeVertexTest < Minitest::Test
   def test_to_h
     v = ApacheAge::Vertex.new(id: 1, label: 'Person', properties: { 'name' => 'Alice' })
     h = v.to_h
-    assert_equal 1, h['id']
-    assert_equal 'Person', h['label']
+    assert_equal 1, h[:id]
+    assert_equal 'Person', h[:label]
+    assert_equal({ 'name' => 'Alice' }, h[:properties])
   end
 
   def test_to_s
@@ -393,6 +413,18 @@ class ApacheAgeVertexTest < Minitest::Test
   def test_inspect
     v = ApacheAge::Vertex.new(id: 1, label: 'Person', properties: {})
     assert_match(/Vertex/, v.inspect)
+  end
+
+  def test_to_agtype
+    v = ApacheAge::Vertex.new(id: 1, label: 'Person', properties: { 'name' => 'Alice' })
+    result = v.to_agtype
+    assert_match(/"id": 1/, result)
+    assert_match(/"label": "Person"/, result)
+    assert_match(/::vertex/, result)
+  end
+
+  def test_fields_constant
+    assert_equal %i[id label properties], ApacheAge::Vertex::FIELDS
   end
 end
 
@@ -408,13 +440,25 @@ class ApacheAgeEdgeTest < Minitest::Test
   def test_to_h
     e = ApacheAge::Edge.new(id: 2, label: 'KNOWS', start_id: 1, end_id: 3, properties: { 'since' => 2020 })
     h = e.to_h
-    assert_equal 2, h['id']
-    assert_equal 1, h['start_id']
+    assert_equal 2, h[:id]
+    assert_equal 1, h[:start_id]
   end
 
   def test_to_s
     e = ApacheAge::Edge.new(id: 2, label: 'KNOWS', start_id: 1, end_id: 3, properties: {})
     assert_match(/::EDGE/, e.to_s)
+  end
+
+  def test_to_agtype
+    e = ApacheAge::Edge.new(id: 2, label: 'KNOWS', start_id: 1, end_id: 3, properties: {})
+    result = e.to_agtype
+    assert_match(/"id": 2/, result)
+    assert_match(/"start_id": 1/, result)
+    assert_match(/::edge/, result)
+  end
+
+  def test_fields_constant
+    assert_equal %i[id label start_id end_id properties], ApacheAge::Edge::FIELDS
   end
 end
 
@@ -435,6 +479,17 @@ class ApacheAgePathTest < Minitest::Test
     assert_equal [], path.vertices
     assert_equal [], path.edges
     assert_equal 0, path.length
+  end
+
+  def test_to_agtype
+    v1 = ApacheAge::Vertex.new(id: 1, label: 'A', properties: {})
+    e1 = ApacheAge::Edge.new(id: 2, label: 'E', start_id: 1, end_id: 3, properties: {})
+    v2 = ApacheAge::Vertex.new(id: 3, label: 'B', properties: {})
+    path = ApacheAge::Path.new(entities: [v1, e1, v2])
+    result = path.to_agtype
+    assert_match(/::path/, result)
+    assert_match(/::vertex/, result)
+    assert_match(/::edge/, result)
   end
 end
 
@@ -468,8 +523,12 @@ class ApacheAgeModuleTest < Minitest::Test
     assert_nil ApacheAge.parse_agtype('')
   end
 
-  def test_parse_agtype_malformed_returns_nil
-    assert_nil ApacheAge.parse_agtype('just_a_plain_string')
+  def test_parse_agtype_malformed_raises_by_default
+    assert_raises(ApacheAge::AgtypeParser::ParseError) { ApacheAge.parse_agtype('just_a_plain_string') }
+  end
+
+  def test_parse_agtype_malformed_lenient_returns_nil
+    assert_nil ApacheAge.parse_agtype('just_a_plain_string', lenient: true)
   end
 
   # --- cypher_escape ---
@@ -508,6 +567,11 @@ class ApacheAgeModuleTest < Minitest::Test
     assert_equal '"hello"', ApacheAge.agtype_encode('hello')
   end
 
+  def test_agtype_encode_string_with_control_chars
+    assert_equal '"line1\\nline2"', ApacheAge.agtype_encode("line1\nline2")
+    assert_equal '"tab\\there"', ApacheAge.agtype_encode("tab\there")
+  end
+
   def test_agtype_encode_symbol
     assert_equal '"hello"', ApacheAge.agtype_encode(:hello)
   end
@@ -524,6 +588,51 @@ class ApacheAgeModuleTest < Minitest::Test
   def test_agtype_encode_hash
     result = ApacheAge.agtype_encode({ 'name' => 'Alice' })
     assert_match(/"name": "Alice"/, result)
+  end
+
+  def test_agtype_encode_hash_with_symbol_key
+    result = ApacheAge.agtype_encode({ name: 'Alice' })
+    assert_match(/"name": "Alice"/, result)
+  end
+
+  def test_agtype_encode_unsupported_type_raises
+    assert_raises(TypeError) { ApacheAge.agtype_encode(Object.new) }
+  end
+
+  def test_agtype_encode_vertex
+    v = ApacheAge::Vertex.new(id: 1, label: 'Person', properties: { 'name' => 'Alice' })
+    result = ApacheAge.agtype_encode(v)
+    assert_match(/::vertex/, result)
+  end
+
+  def test_agtype_encode_edge
+    e = ApacheAge::Edge.new(id: 2, label: 'KNOWS', start_id: 1, end_id: 3, properties: {})
+    result = ApacheAge.agtype_encode(e)
+    assert_match(/::edge/, result)
+  end
+
+  # --- dollar_quote ---
+
+  def test_dollar_quote_simple
+    assert_equal '$$', ApacheAge.send(:dollar_quote, 'MATCH (n) RETURN n')
+  end
+
+  def test_dollar_quote_with_dollar_dollar
+    result = ApacheAge.send(:dollar_quote, 'MATCH (n {name: $$}) RETURN n')
+    assert_match(/\$age_\d+\$/, result)
+    refute_equal '$tag$', result
+  end
+
+  def test_dollar_quote_returns_valid_delimiter
+    cypher = 'contains $$'
+    delimiter = ApacheAge.send(:dollar_quote, cypher)
+    refute_includes cypher, delimiter
+  end
+
+  # --- parse_agtype_numeric ---
+
+  def test_parse_agtype_numeric_nil_raises
+    assert_raises(ArgumentError) { ApacheAge.parse_agtype_numeric(nil) }
   end
 
   # --- Validation ---
@@ -569,5 +678,17 @@ class ApacheAgeModuleTest < Minitest::Test
   def test_validate_column_name_invalid
     assert_raises(ArgumentError) { ApacheAge.send(:validate_column_name!, '1bad') }
     assert_raises(ArgumentError) { ApacheAge.send(:validate_column_name!, 'drop table') }
+  end
+
+  # --- Connection ---
+
+  def test_connection_savepoint_name_validation
+    assert_raises(ArgumentError) { ApacheAge::Connection.with_savepoint("'; DROP TABLE users; --") {} }
+    assert_raises(ArgumentError) { ApacheAge::Connection.with_savepoint('1invalid') {} }
+  end
+
+  def test_connection_disconnect_without_connection
+    # Should not raise even when no connection is set
+    ApacheAge::Connection.disconnect
   end
 end
