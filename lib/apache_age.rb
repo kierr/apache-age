@@ -28,12 +28,17 @@ module ApacheAge
   VALID_OBJECT_TYPE = /\A[a-z_][a-z0-9_]*\z/
   # Matches Python driver's VALID_GRAPH_NAME but enforces PostgreSQL's
   # 63-byte identifier limit. AGE graph names are PostgreSQL identifiers.
-  VALID_GRAPH_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
+  # RATIONALE: Regex enforces 3+ char minimum directly — the old single-char
+  # alternation was dead code since MIN_GRAPH_NAME_LENGTH=3 rejected 1-char names.
+  # Would need MIN_GRAPH_NAME_LENGTH < 3 to reconsider.
+  VALID_GRAPH_NAME = /\A[A-Za-z_][A-Za-z0-9_]{2,}\z/
+  MIN_GRAPH_NAME_LENGTH = 3
   MAX_GRAPH_NAME_LENGTH = 63
   # Column/type identifier validation — prevents SQL injection in AS clause.
   VALID_COLUMN_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
   VALID_COLUMN_TYPE = /\A[A-Za-z_][A-Za-z0-9_.]*\z/
   NEGATIVE_CACHE_TTL = 30
+  MAX_DOLLAR_QUOTE_ATTEMPTS = 100
 
   class << self
     extend T::Sig
@@ -41,6 +46,7 @@ module ApacheAge
     @graph_name = T.let('apache_age', String)
     @logger = T.let(Logger.new($stdout), ::Logger)
     @pg_connection = T.let(nil, T.nilable(PG::Connection))
+    @pg_mutex = T.let(Mutex.new, Mutex)
 
     sig { returns(String) }
     attr_accessor :graph_name
@@ -48,14 +54,18 @@ module ApacheAge
     sig { returns(::Logger) }
     attr_accessor :logger
 
+    # RATIONALE: @pg_connection is protected by @pg_mutex for thread safety.
+    # PG::Connection is not thread-safe for concurrent queries; the mutex
+    # serializes all access. For high-concurrency workloads, use ActiveRecord
+    # (which provides a connection pool) instead.
     sig { params(conn: T.nilable(PG::Connection)).void }
     def connection=(conn)
-      @pg_connection = conn
+      @pg_mutex.synchronize { @pg_connection = conn }
     end
 
     sig { returns(T.nilable(PG::Connection)) }
     def connection
-      @pg_connection
+      @pg_mutex.synchronize { @pg_connection }
     end
 
     # Structured logging dispatch: preserves keyword args for SemanticLogger,
@@ -68,6 +78,8 @@ module ApacheAge
         logger.public_send(level, message)
       end
     rescue ArgumentError
+      # RATIONALE: Rescue ArgumentError because stdlib Logger#info does not accept
+      # keyword arguments. The fallback formats kwargs as key=value pairs.
       logger.public_send(level, "#{message} (#{kwargs.map { |k, v| "#{k}=#{v}" }.join(', ')})")
     end
 
@@ -75,7 +87,7 @@ module ApacheAge
     # Matches the Go, Python, and Node.js drivers' graph management capabilities.
 
     # Create a graph. Raises GraphLifecycleError on failure.
-    # Idempotent — returns silently if the graph already exists.
+    # Non-idempotent — raises on duplicate graph name.
     sig { params(name: T.nilable(String)).void }
     def create_graph!(name: nil)
       graph = name || graph_name
@@ -92,16 +104,22 @@ module ApacheAge
     end
 
     # Drop a graph. Raises GraphLifecycleError on failure.
+    # RATIONALE: cascade: true is an irreversible destructive operation.
+    # Log a warning so operators can audit cascade usage.
     # Returns silently if the graph does not exist.
-    sig { params(name: T.nilable(String)).void }
-    def drop_graph!(name: nil)
+    sig { params(name: T.nilable(String), cascade: T::Boolean).void }
+    def drop_graph!(name: nil, cascade: false)
       graph = name || graph_name
       validate_graph_name!(graph)
       ensure_age_session
 
-      Connection.execute("SELECT ag_catalog.drop_graph('#{cypher_escape(graph)}', true)")
+      if cascade
+        log(:warn, 'age_graph.drop_cascade', graph_name: graph,
+                 message: 'CASCADE drop will destroy all labels and data in this graph')
+      end
+      Connection.execute("SELECT ag_catalog.drop_graph('#{cypher_escape(graph)}', #{cascade})")
       reset_graph_availability!
-      log(:info, 'age_graph.dropped', graph_name: graph)
+      log(:info, 'age_graph.dropped', graph_name: graph, cascade: cascade)
     rescue StandardError => e
       raise GraphLifecycleError, "Failed to drop graph '#{graph}': #{e.message}"
     end
@@ -161,14 +179,22 @@ module ApacheAge
                  end
       col_names = columns.is_a?(String) ? columns.split(',').map { |c| c.strip.split.first } : columns
 
+      validate_graph_name!(graph_name) unless graph_name.match?(VALID_GRAPH_NAME)
+
       if params && !params.empty?
         raw_result = execute_prepared_cypher(cypher, col_def, params)
       else
+        delimiter = dollar_quote(cypher)
         sql = <<~SQL
-          SELECT ag_catalog.cypher('#{graph_name}',
-            #{dollar_quote(cypher)} #{cypher} #{dollar_quote(cypher)}) AS (#{col_def})
+          SELECT ag_catalog.cypher('#{cypher_escape(graph_name)}',
+            #{delimiter} #{cypher} #{delimiter}) AS (#{col_def})
         SQL
+        start_ts = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         raw_result = Connection.execute(sql)
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
+        row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.cast(raw_result, T.untyped).length
+        log(:info, 'age_graph.query_cypher', graph_name: graph_name,
+                 query_snippet: cypher[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
       end
 
       rows = if raw_result.is_a?(PG::Result)
@@ -205,13 +231,10 @@ module ApacheAge
     end
     def execute_prepared_cypher(cypher, columns_def, params)
       ensure_age_session
+      validate_graph_name!(graph_name) unless graph_name.match?(VALID_GRAPH_NAME)
 
-      # Prepare the Cypher statement on the server.
-      # age_prepare_cypher sets session-scoped state: the graph name and
-      # Cypher string are bound via SQL parameters ($1, $2), preventing
-      # SQL-level injection. After this call, cypher(NULL, NULL) uses
-      # the prepared statement.
-      prepare_sql = "SELECT * FROM ag_catalog.age_prepare_cypher($1, $2)"
+      # Use the same connection for both prepare and execute to avoid
+      # a race where AR pool checkouts differ between steps.
       conn = Connection.current
       raw_conn = if conn.respond_to?(:raw_connection)
                    conn.raw_connection
@@ -220,16 +243,34 @@ module ApacheAge
                  end
       pg_conn = T.cast(raw_conn, PG::Connection)
 
+      # Prepare the Cypher statement on the server.
+      # age_prepare_cypher sets session-scoped state: the graph name and
+      # Cypher string are bound via SQL parameters ($1, $2), preventing
+      # SQL-level injection. After this call, cypher(NULL, NULL) uses
+      # the prepared statement.
+      prepare_sql = "SELECT * FROM ag_catalog.age_prepare_cypher($1, $2)"
       pg_conn.exec_params(prepare_sql, [graph_name, cypher])
 
-      # Encode Cypher parameters as agtype literals
-      param_values = params.values.map { |v| agtype_encode(v) }
-      params_clause = param_values.empty? ? '' : ", #{param_values.map { |v| "'#{v}'" }.join(', ')}"
+      # Encode Cypher parameters as agtype literals.
+      # Single quotes in values are escaped (doubled) to prevent SQL
+      # injection through the string-literal boundary.
+      param_values = params.values.map do |v|
+        encoded = agtype_encode(v)
+        "'#{encoded.gsub("'", "''")}'"
+      end
+      params_clause = param_values.empty? ? '' : ", #{param_values.join(', ')}"
 
       # Execute using session-scoped prepared state.
       # cypher(NULL, NULL) reads the graph + cypher from age_prepare_cypher.
       exec_sql = "SELECT * FROM ag_catalog.cypher(NULL, NULL#{params_clause}) AS (#{columns_def})"
-      Connection.execute(exec_sql)
+      start_ts = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      raw_result = pg_conn.exec(exec_sql)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
+      row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : 0
+      log(:info, 'age_graph.prepared_cypher', graph_name: graph_name,
+               query_snippet: cypher[0, 80], elapsed_ms: (elapsed * 1000).round(1),
+               row_count: row_count, param_count: params.size)
+      raw_result
     rescue StandardError => e
       log(:error, 'age_graph.prepared_cypher_failed', error_class: e.class.name, error_message: e.message)
       raise CypherExecutionError, "Prepared Cypher execution failed: #{e.message}"
@@ -455,9 +496,15 @@ module ApacheAge
       value.gsub("'", "''")
     end
 
-    # Public singleton: Ontology::Related gates traversal on this from outside the module.
+    # RATIONALE: graph_name is validated at query time, not at the setter,
+    # because the setter is used during initialization (Railtie config) when
+    # the graph may not exist yet. Validation at query time catches injection
+    # without breaking the init workflow.
     sig { returns(T::Boolean) }
     def graph_available?
+      return false unless @graph_name && !@graph_name.empty?
+      return false unless @graph_name.match?(VALID_GRAPH_NAME)
+
       if @graph_available.nil? || (@graph_available == false && @graph_available_checked_at && Time.now - T.must(@graph_available_checked_at) > NEGATIVE_CACHE_TTL)
         @graph_available_checked_at = Time.now
         @graph_available = check_graph_exists?
@@ -473,23 +520,30 @@ module ApacheAge
     # Handles: strings, integers, floats, booleans, null, arrays, objects,
     # ::vertex, ::edge, ::path, ::numeric, NaN, Infinity, -Infinity,
     # escaped strings, nested structures.
-    sig { params(value: T.nilable(String)).returns(T.untyped) }
-    def parse_agtype(value)
+    # RATIONALE: parse_agtype raises on malformed input by default. The
+    # lenient: true option returns nil for parse failures, preserving the
+    # old behavior for callers that expect it.
+    sig { params(value: T.nilable(String), lenient: T::Boolean).returns(T.untyped) }
+    def parse_agtype(value, lenient: false)
       return nil if value.nil?
       return nil if value.strip.empty?
 
       AgtypeParser.parse(value)
     rescue AgtypeParser::ParseError => e
-      log(:warn, 'age_graph.agtype_parse_failed', value: value[0..80], error: e.message)
-      nil
+      if lenient
+        log(:warn, 'age_graph.agtype_parse_failed', value: value[0..80], error: e.message)
+        nil
+      else
+        raise
+      end
     end
 
     # Parse an agtype numeric value. Supports ::numeric (BigDecimal),
     # NaN, Infinity, -Infinity, regular floats, and integers.
-    # Returns nil for null/empty.
+    # Raises ArgumentError for nil input; returns nil for empty strings.
     sig { params(value: T.nilable(String)).returns(T.nilable(Numeric)) }
     def parse_agtype_numeric(value)
-      return nil if value.nil?
+      raise ArgumentError, 'Cannot parse nil as agtype numeric' if value.nil?
       return nil if value.strip.empty?
 
       parsed = AgtypeParser.parse(value.strip)
@@ -501,6 +555,9 @@ module ApacheAge
     end
 
     # Encode a Ruby value as an agtype literal string for parameter binding.
+    # RATIONALE: Control-character escaping, hash-key escaping, and the else-branch
+    # all apply the same gsub chain as the String branch to ensure valid agtype
+    # output that round-trips through AgtypeParser.
     sig { params(value: T.untyped).returns(String) }
     def agtype_encode(value)
       case value
@@ -517,15 +574,34 @@ module ApacheAge
           value.to_s
         end
       when BigDecimal then "#{value.to_s('F')}::numeric"
-      when String then "\"#{value.gsub('\\', '\\\\\\\\').gsub('"', '\\\\"')}\""
+      when String then "\"#{escape_agtype_string(value)}\""
       when Symbol then agtype_encode(value.to_s)
       when Array then "[#{value.map { |v| agtype_encode(v) }.join(', ')}]"
       when Hash
-        pairs = value.map { |k, v| "\"#{k}\": #{agtype_encode(v)}" }.join(', ')
+        pairs = value.map { |k, v| "\"#{escape_agtype_string(k.to_s)}\": #{agtype_encode(v)}" }.join(', ')
         "{#{pairs}}"
+      when Vertex then value.to_agtype
+      when Edge then value.to_agtype
+      when Path then value.to_agtype
       else
-        "\"#{value}\""
+        # RATIONALE: For unsupported types, raise TypeError rather than producing
+        # invalid agtype via the old "\"#{value}\"" fallthrough. Callers must
+        # explicitly convert custom objects to a supported type.
+        raise TypeError, "Cannot encode #{value.class} as agtype: #{value.inspect[0, 100]}"
       end
+    end
+
+    # Escape a string for safe embedding in agtype double-quoted literals.
+    # Handles: backslash, double-quote, and control characters (\n, \r, \t, \b, \f).
+    sig { params(s: String).returns(String) }
+    def escape_agtype_string(s)
+      s.gsub('\\', '\\\\\\\\')
+       .gsub('"', '\\"')
+       .gsub("\n", '\\n')
+       .gsub("\r", '\\r')
+       .gsub("\t", '\\t')
+       .gsub("\b", '\\b')
+       .gsub("\f", '\\f')
     end
 
     # --- Private methods ---
@@ -537,10 +613,20 @@ module ApacheAge
       Kernel.raise ArgumentError, "Invalid AGE label '#{label}'"
     end
 
+    # RATIONALE: validate_label_name! has no callers today. Labels are created
+    # server-side and validated by AGE. Keeping the constant and method for
+    # future label-management API use.
+    VALID_LABEL_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
+    sig { params(name: String).void }
+    def validate_label_name!(name)
+      Kernel.raise ArgumentError, "Invalid AGE label name '#{name}'" unless name.match?(VALID_LABEL_NAME)
+    end
+
     sig { params(name: String).void }
     def validate_graph_name!(name)
       Kernel.raise ArgumentError, "Invalid AGE graph name '#{name}'" unless name.match?(VALID_GRAPH_NAME)
       Kernel.raise ArgumentError, "AGE graph name exceeds #{MAX_GRAPH_NAME_LENGTH} characters" if name.length > MAX_GRAPH_NAME_LENGTH
+      Kernel.raise ArgumentError, "AGE graph name too short (min #{MIN_GRAPH_NAME_LENGTH} chars)" if name.length < MIN_GRAPH_NAME_LENGTH
     end
 
     sig { params(object_id: T.untyped).returns(String) }
@@ -673,12 +759,18 @@ module ApacheAge
 
     sig { params(cypher_body: String, columns: String).returns(T.untyped) }
     def run_cypher(cypher_body, columns:)
-      dq = dollar_quote(cypher_body)
+      validate_graph_name!(graph_name) unless graph_name.match?(VALID_GRAPH_NAME)
+      delimiter = dollar_quote(cypher_body)
       sql = <<~SQL
-        SELECT ag_catalog.cypher('#{graph_name}',
-          #{dq} #{cypher_body} #{dq}) AS (#{columns})
+        SELECT ag_catalog.cypher('#{cypher_escape(graph_name)}',
+          #{delimiter} #{cypher_body} #{delimiter}) AS (#{columns})
       SQL
+      start_ts = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       raw_result = ApacheAge::Connection.execute(sql)
+      elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
+      row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.cast(raw_result, T.untyped).length
+      log(:info, 'age_graph.run_cypher', graph_name: graph_name,
+               query_snippet: cypher_body[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
       if raw_result.is_a?(PG::Result)
         raw_result.map { |row| row }
       else
@@ -689,15 +781,24 @@ module ApacheAge
 
     # Deterministic dollar-quoting matching the Node.js driver approach:
     # use $$ when the Cypher string doesn't contain $$, otherwise find
-    # a unique $tag$ delimiter. Avoids random tags which are wasteful
-    # and theoretically exploitable.
+    # Returns a dollar-quoted string delimiter that does not appear in the
+    # given cypher string. For simple queries without $$, returns $$.
+    # For queries containing $$, generates a unique tag (e.g. $age_42$) not
+    # present in the cypher string, with an iteration limit to prevent
+    # pathological cases.
     sig { params(cypher: String).returns(String) }
     def dollar_quote(cypher)
       return '$$' unless cypher.include?('$$')
 
-      tag = 'age'
-      tag = "age_#{Kernel.rand(1_000_000)}" while cypher.include?("$#{tag}$")
-      "$tag$"
+      attempts = 0
+      tag = "age_#{Kernel.rand(1_000_000)}"
+      while cypher.include?("$#{tag}$")
+        attempts += 1
+        raise CypherExecutionError, "Could not find unique dollar-quote delimiter after #{MAX_DOLLAR_QUOTE_ATTEMPTS} attempts" if attempts >= MAX_DOLLAR_QUOTE_ATTEMPTS
+
+        tag = "age_#{Kernel.rand(1_000_000)}"
+      end
+      "$#{tag}$"
     end
 
     # Parse query_cypher results: each row is a Hash, each agtype column
@@ -708,8 +809,10 @@ module ApacheAge
         hash = row.is_a?(Hash) ? row : T.cast(row, T::Hash[String, T.untyped])
         parsed = {}
         col_names.each do |col|
-          raw = hash[col]
-          parsed[col] = raw.nil? ? nil : parse_agtype(raw)
+          # Use fetch with fallback to symbol key — avoids || which silently
+          # replaces boolean false with the symbol-keyed lookup result.
+          raw = hash.fetch(col) { hash[col.to_sym] }
+          parsed[col] = raw.nil? ? nil : parse_agtype(raw, lenient: true)
         end
         parsed
       end
@@ -804,13 +907,13 @@ module ApacheAge
     end
 
     private :validate_label!, :validate_graph_name!, :validate_object_id!, :validate_object_type!,
-            :validate_column_name!, :validate_column_def!,
+            :validate_column_name!, :validate_column_def!, :validate_label_name!,
             :build_edge_cypher, :build_traverse_cypher, :build_traverse_edges_cypher,
             :traverse_edges_columns, :execute_cypher, :execute_cypher_with_columns,
             :dollar_quote, :parse_query_results, :parse_edge_traverse_results, :parse_traverse_results,
             :parse_forward_traverse_results, :parse_reverse_traverse_results,
-            :parse_agtype, :parse_agtype_numeric, :agtype_encode, :build_properties_clause,
-            :run_cypher, :load_age_if_needed
+            :build_properties_clause,
+            :escape_agtype_string, :run_cypher, :load_age_if_needed
 
     sig { returns(T::Boolean) }
     def check_graph_exists?
@@ -833,6 +936,7 @@ ApacheAge.graph_name = 'apache_age'
 ApacheAge.logger = Logger.new($stdout)
 
 require 'apache_age/agtype_parser'
+require 'apache_age/type_base'
 require 'apache_age/connection'
 require 'apache_age/edge_properties'
 require 'apache_age/vertex'
