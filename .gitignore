@@ -5,3 +5,11 @@
 /tmp/
 /vendor/
 .ruby-version
+/coverage/
+
+# Agent state
+.agents/
+.pi/
+.claude/
+.planning/
+.codex/
