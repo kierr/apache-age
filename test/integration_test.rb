@@ -1,6 +1,7 @@
 # typed: false
 # frozen_string_literal: true
 
+require 'securerandom'
 require_relative 'test_helper'
 
 # Integration tests against a local PostgreSQL + AGE instance.
@@ -17,7 +18,7 @@ class ApacheAgeIntegrationTest < Minitest::Test
     dbname: 'age_test'
   }.freeze
 
-  GRAPH_NAME = 'integration_test_graph'
+  GRAPH_NAME = 'integration_test_graph'.freeze
 
   def self.db_available?
     PG.connect(**DB_CONFIG).close
@@ -49,10 +50,7 @@ class ApacheAgeIntegrationTest < Minitest::Test
     end
     conn.exec("SELECT create_graph('#{GRAPH_NAME}')")
 
-    # Set graph name so graph_available? passes
     ApacheAge.graph_name = GRAPH_NAME
-    # Reset any negative cache
-    ApacheAge.instance_variable_set(:@graph_available, true) if ApacheAge.instance_variable_defined?(:@graph_available)
   end
 
   def teardown
@@ -112,10 +110,14 @@ class ApacheAgeIntegrationTest < Minitest::Test
 
   def test_graph_exists_and_drop_graph_cascade
     assert_equal true, ApacheAge.graph_exists?(name: GRAPH_NAME)
-    ApacheAge.drop_graph!(name: GRAPH_NAME, cascade: true)
-    refute ApacheAge.graph_exists?(name: GRAPH_NAME)
-    # Recreate for teardown
-    ApacheAge::Connection.current.exec("SELECT create_graph('#{GRAPH_NAME}')")
+    # Use a separate throwaway graph for drop_graph! test to avoid
+    # dropping the shared graph while other tests may be running.
+    drop_name = "drop_test_#{SecureRandom.hex(4)}"
+    conn = ApacheAge::Connection.current
+    conn.exec("SELECT create_graph('#{drop_name}')")
+    assert_equal true, ApacheAge.graph_exists?(name: drop_name)
+    ApacheAge.drop_graph!(name: drop_name, cascade: true)
+    refute ApacheAge.graph_exists?(name: drop_name)
   end
 
   def test_parse_query_results_with_agtype
