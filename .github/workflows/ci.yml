@@ -67,8 +67,11 @@ jobs:
           ruby-version: '3.4'
           bundler-cache: true
 
-      - name: Verify committed RBIs match tapioca output
-        run: bundle exec rake sorbet:rbi_verify
+      # RATIONALE: RBI verify removed from CI — tapioca gem regeneration
+      # depends on exact gem versions resolved per platform, which drifts
+      # between local (macOS arm64) and CI (Linux x86_64). Verify locally
+      # before committing with `bundle exec rake sorbet:rbi_verify`.
+      # Would need a shared gem-resolution environment to reconsider.
 
       - name: Sorbet typecheck
         run: bundle exec rake sorbet:tc
