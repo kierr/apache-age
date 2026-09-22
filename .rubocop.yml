@@ -11,6 +11,15 @@ Metrics/MethodLength:
 Metrics/ClassLength:
   Max: 200
 
+# RATIONALE: Disabled because Sorbet sigs use named block parameters (blk/block)
+# which must match the method definition. Anonymous block forwarding (`&`)
+# breaks Sorbet's sig validation — the param name in sig must match the method
+# parameter name. Would need Sorbet to support anonymous block params to reconsider.
+Naming/BlockForwarding:
+  Enabled: false
+Style/ArgumentsForwarding:
+  Enabled: false
+
 # RATIONALE: Disabled because this is a gem, not a Rails app — every public
 # method already has a Sorbet sig that serves as documentation. Re-enabling
 # would add boilerplate comments that duplicate the type signatures.

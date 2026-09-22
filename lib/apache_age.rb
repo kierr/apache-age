@@ -508,14 +508,14 @@ module ApacheAge
     end
 
     sig { params(block: T.proc.returns(T.untyped)).returns(T.untyped) }
-    def with_age_session(&)
+    def with_age_session(&block)
       ensure_age_session
       yield
     end
 
     sig { params(identity: String, block: T.proc.returns(T.untyped)).returns(T::Boolean) }
-    def with_savepoint(identity, &)
-      ApacheAge::Connection.with_savepoint(identity, &)
+    def with_savepoint(identity, &block)
+      ApacheAge::Connection.with_savepoint(identity, &block)
     rescue EdgeCreationError
       false
     rescue ArgumentError

@@ -74,12 +74,12 @@ module ApacheAge
 
       # Run a block inside a savepoint; no-op if no transaction is active.
       sig { params(name: String, blk: T.proc.returns(T.untyped)).returns(T.untyped) }
-      def with_savepoint(name, &)
+      def with_savepoint(name, &blk)
         validate_savepoint_name!(name)
         if active_record?
-          ar_with_savepoint(name, &)
+          ar_with_savepoint(name, &blk)
         else
-          pg_with_savepoint(name, &)
+          pg_with_savepoint(name, &blk)
         end
       end
 
