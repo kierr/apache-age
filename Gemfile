@@ -10,6 +10,5 @@ group :development, :test do
   gem 'rubocop', '~> 1.69'
   gem 'simplecov', '~> 0.22'
   gem 'sorbet', '~> 0.5'
-  gem 'spoom', '~> 1.6'
   gem 'tapioca', '~> 0.16'
 end
