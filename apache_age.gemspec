@@ -21,9 +21,9 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>= 3.1'
 
   spec.metadata = {
-    'homepage_uri'    => spec.homepage,
+    'homepage_uri' => spec.homepage,
     'source_code_uri' => 'https://github.com/kierr/apache-age',
-    'changelog_uri'   => 'https://github.com/kierr/apache-age/blob/main/CHANGELOG.md',
+    'changelog_uri' => 'https://github.com/kierr/apache-age/blob/main/CHANGELOG.md',
     'rubygems_mfa_required' => 'true'
   }
 
@@ -37,7 +37,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'sorbet-runtime', '~> 0.5'
 
   spec.add_development_dependency 'activerecord'
-  spec.add_development_dependency 'semantic_logger'
   spec.add_development_dependency 'minitest'
   spec.add_development_dependency 'rake', '~> 13.0'
+  spec.add_development_dependency 'semantic_logger'
 end

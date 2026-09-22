@@ -11,9 +11,7 @@ require 'rails/railtie'
 module ApacheAge
   class Railtie < Rails::Railtie
     initializer 'apache_age.logger' do
-      if defined?(SemanticLogger)
-        ApacheAge.logger = SemanticLogger['ApacheAge']
-      end
+      ApacheAge.logger = SemanticLogger['ApacheAge'] if defined?(SemanticLogger)
     end
 
     initializer 'apache_age.connection_hooks' do

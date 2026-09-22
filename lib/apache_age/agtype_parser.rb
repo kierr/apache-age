@@ -120,11 +120,11 @@ module ApacheAge
       advance # consume opening "
       buf = +''
       while peek && peek != '"'
-        if peek == '\\'
-          buf << parse_escape_sequence
-        else
-          buf << advance
-        end
+        buf << if peek == '\\'
+                 parse_escape_sequence
+               else
+                 advance
+               end
       end
       advance # consume closing "
       buf
@@ -149,15 +149,11 @@ module ApacheAge
         # Leading zero is only valid if followed by '.', 'e'/'E', or end/non-digit
         if peek && digit?(peek)
           has_leading_zero = true
-          while peek && digit?(peek)
-            num_text << advance
-          end
+          num_text << advance while peek && digit?(peek)
         end
       elsif digit?(peek)
         num_text << advance
-        while peek && digit?(peek)
-          num_text << advance
-        end
+        num_text << advance while peek && digit?(peek)
       end
 
       # Decimal part
@@ -165,20 +161,16 @@ module ApacheAge
       if peek == '.'
         has_decimal = true
         num_text << advance
-        while peek && digit?(peek)
-          num_text << advance
-        end
+        num_text << advance while peek && digit?(peek)
       end
 
       # Exponent part
       has_exponent = false
-      if peek && (peek == 'e' || peek == 'E')
+      if peek && %w[e E].include?(peek)
         has_exponent = true
         num_text << advance
-        num_text << advance if peek && (peek == '+' || peek == '-')
-        while peek && digit?(peek)
-          num_text << advance
-        end
+        num_text << advance if peek && ['+', '-'].include?(peek)
+        num_text << advance while peek && digit?(peek)
       end
 
       # Reject leading zeros per Agtype.g4 (e.g., "007" is invalid)
@@ -257,9 +249,7 @@ module ApacheAge
       advance # first :
       advance # second :
       ident = +''
-      while peek && (ident_char?(peek))
-        ident << advance
-      end
+      ident << advance while peek && ident_char?(peek)
       raise ParseError, "Empty type annotation at position #{@pos}" if ident.empty?
 
       ident
@@ -278,9 +268,9 @@ module ApacheAge
     sig { void }
     def check_depth
       @depth += 1
-      if @depth > self.class.max_depth
-        raise ParseError, "Nesting depth exceeds #{self.class.max_depth} at position #{@pos}"
-      end
+      return unless @depth > self.class.max_depth
+
+      raise ParseError, "Nesting depth exceeds #{self.class.max_depth} at position #{@pos}"
     end
 
     # Parse a keyword (null, true, false, NaN, Infinity) with boundary check.
@@ -292,6 +282,7 @@ module ApacheAge
       if end_pos < @input.length && ident_char?(@input[end_pos])
         raise ParseError, "Unexpected identifier at position #{@pos}: expected '#{keyword}' but got longer token"
       end
+
       @pos = end_pos
       value
     end
@@ -303,6 +294,7 @@ module ApacheAge
         BigDecimal(value.to_s)
       when 'vertex'
         raise ParseError, "Expected Hash for ::vertex, got #{value.class}" unless value.is_a?(Hash)
+
         # RATIONALE: Field names derived from Vertex::FIELDS rather than
         # hardcoded, so adding a field to Vertex is a single-site change.
         kwargs = Vertex::FIELDS.each_with_object({}) do |f, h|
@@ -311,12 +303,14 @@ module ApacheAge
         Vertex.new(**T.unsafe(kwargs))
       when 'edge'
         raise ParseError, "Expected Hash for ::edge, got #{value.class}" unless value.is_a?(Hash)
+
         kwargs = Edge::FIELDS.each_with_object({}) do |f, h|
           h[f] = f == :properties ? (value[f.to_s] || {}) : value[f.to_s]
         end
         Edge.new(**T.unsafe(kwargs))
       when 'path'
         raise ParseError, "Expected Array for ::path, got #{value.class}" unless value.is_a?(Array)
+
         Path.new(entities: value)
       else
         value
@@ -338,25 +332,30 @@ module ApacheAge
       c = advance
       case c
       when '"', '\\', '/' then c
-      when 'b'  then "\b"
-      when 'f'  then "\f"
-      when 'n'  then "\n"
-      when 'r'  then "\r"
-      when 't'  then "\t"
+      when 'b' then "\b"
+      when 'f' then "\f"
+      when 'n' then "\n"
+      when 'r' then "\r"
+      when 't' then "\t"
       when 'u'
         codepoint = parse_unicode_escape
         # Handle UTF-16 surrogate pairs: if high surrogate, expect low surrogate
         if codepoint >= 0xD800 && codepoint <= 0xDBFF
           # High surrogate — next must be \uXXXX low surrogate
-          if peek == '\\' && @input[@pos + 1] == 'u'
-            advance # consume backslash
-            advance # consume 'u'
-            low = parse_unicode_escape
-            raise ParseError, "Invalid surrogate pair: expected low surrogate after high surrogate" unless low >= 0xDC00 && low <= 0xDFFF
-            codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00)
-          else
+          unless peek == '\\' && @input[@pos + 1] == 'u'
             raise ParseError, "High surrogate \\u#{format('%04X', codepoint)} without following low surrogate"
           end
+
+          advance # consume backslash
+          advance # consume 'u'
+          low = parse_unicode_escape
+          unless low >= 0xDC00 && low <= 0xDFFF
+            raise ParseError,
+                  'Invalid surrogate pair: expected low surrogate after high surrogate'
+          end
+
+          codepoint = 0x10000 + ((codepoint - 0xD800) << 10) + (low - 0xDC00)
+
         elsif codepoint >= 0xDC00 && codepoint <= 0xDFFF
           raise ParseError, "Low surrogate \\u#{format('%04X', codepoint)} without preceding high surrogate"
         end
@@ -371,6 +370,7 @@ module ApacheAge
     def parse_unicode_escape
       hex = @input[@pos, 4]
       raise ParseError, "Incomplete unicode escape at position #{@pos}" unless hex && hex.length == 4
+
       @pos += 4
       hex.to_i(16)
     end
@@ -394,14 +394,13 @@ module ApacheAge
 
     sig { void }
     def skip_whitespace
-      while @pos < @input.length && (@input[@pos] == ' ' || @input[@pos] == "\t" || @input[@pos] == "\n" || @input[@pos] == "\r")
-        @pos += 1
-      end
+      @pos += 1 while @pos < @input.length && [' ', "\t", "\n", "\r"].include?(@input[@pos])
     end
 
     sig { params(c: T.nilable(String)).returns(T::Boolean) }
     def digit?(c)
       return false if c.nil?
+
       c >= '0' && c <= '9'
     end
 
@@ -417,6 +416,7 @@ module ApacheAge
     sig { params(c: T.nilable(String)).returns(T::Boolean) }
     def ident_char?(c)
       return false if c.nil?
+
       (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
     end
   end

@@ -5,7 +5,6 @@ require 'json'
 
 require 'pg'
 
-
 module ApacheAge
   # Standalone bulk loading for Apache AGE. No Rails dependency — pg gem only.
   #
@@ -26,6 +25,7 @@ module ApacheAge
   # RATIONALE: DYNAMIC-BOUNDARY: ApacheAge::BulkLoad crosses two untyped edges: pg gem RBIs declare PG::Connection#exec_params/#exec as returning T.untyped (typed shim wraps each call site to restore PG::Result), and per-label statistics hashes are T::Hash[Symbol, T.untyped] (mixed Integer/String/Float count/progress/speed values). T.untyped is the boundary type at each edge. Would need typed pg gem RBIs and a typed LabelInfo/Stats struct to remove.
   module BulkLoad
     extend T::Sig
+
     CYPHER_BATCH_LIMIT = 200
     DEFAULT_BATCH_SIZE = 100_000
     ENTRY_ID_BITS = 48
@@ -59,14 +59,11 @@ module ApacheAge
       end
     end
 
-    module_function
-
-
-
     # --- GraphAdmin: graph and label lifecycle ---
 
     module GraphAdmin
       extend T::Sig
+
       module_function
 
       sig { params(conn: PG::Connection, graph_name: String).void }
@@ -121,13 +118,12 @@ module ApacheAge
         qualified = quote_qualified(graph_name, label_name)
         index_name = quote_ident("idx_#{label_name.downcase}_properties_gin")
         BulkLoad.query(conn, "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified} USING GIN (properties)")
-      rescue PG::Error => e
+      rescue PG::Error
         # Index creation is a performance optimization, not a correctness
         # requirement — a transient failure must not abort the bulk load.
         # logged via ApacheAge.logger, which dispatches to SemanticLogger when available.
         ApacheAge.logger.warn(
-          'age_graph.bulk_load.gin_index_ensure_failed',
-         
+          'age_graph.bulk_load.gin_index_ensure_failed'
         )
       end
 
@@ -156,7 +152,8 @@ module ApacheAge
         Kernel.raise BulkLoadError, "Label '#{label_name}' not found" if row.ntuples.zero?
 
         r = row.first
-        { id: BulkLoad.parse_int(r['id'], 10), name: r['name'], kind: r['kind'], relation: r['relation'], seq_name: r['seq_name'] }
+        { id: BulkLoad.parse_int(r['id'], 10), name: r['name'], kind: r['kind'], relation: r['relation'],
+          seq_name: r['seq_name'] }
       end
 
       LabelInfo = T.type_alias { T::Hash[Symbol, T.untyped] }
@@ -211,6 +208,7 @@ module ApacheAge
 
     module VertexLoader
       extend T::Sig
+
       module_function
 
       # Loads vertices from _migration_pk_map into a per-label table.
@@ -230,18 +228,22 @@ module ApacheAge
                table_name: String, object_type: String, batch_size: Integer,
                progress_key: T.nilable(String)).returns(T::Hash[Symbol, T.untyped])
       end
-      def load(conn, strategy:, graph_name:, label_name:, table_name:, object_type:, batch_size: DEFAULT_BATCH_SIZE, progress_key: nil)
+      def load(conn, strategy:, graph_name:, label_name:, table_name:, object_type:, batch_size: DEFAULT_BATCH_SIZE,
+               progress_key: nil)
         start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         label = GraphAdmin.label_info(conn, label_name)
         total = T.let(0, Integer)
 
         case strategy
         when :insert_select
-          total = load_insert_select(conn, graph_name:, label_name:, label:, table_name:, object_type:, batch_size:, progress_key:)
+          total = load_insert_select(conn, graph_name:, label_name:, label:, table_name:, object_type:, batch_size:,
+                                           progress_key:)
         when :copy_stdin
-          total = load_copy_stdin(conn, graph_name:, label_name:, label:, table_name:, object_type:, batch_size:, progress_key:)
+          total = load_copy_stdin(conn, graph_name:, label_name:, label:, table_name:, object_type:, batch_size:,
+                                        progress_key:)
         when :cypher_merge
-          total = load_cypher_merge(conn, graph_name:, label_name:, table_name:, object_type:, batch_size:, progress_key:)
+          total = load_cypher_merge(conn, graph_name:, label_name:, table_name:, object_type:, batch_size:,
+                                          progress_key:)
         else
           Kernel.raise ArgumentError, "Unknown strategy: #{strategy}"
         end
@@ -255,7 +257,8 @@ module ApacheAge
                table_name: String, object_type: String, batch_size: Integer,
                progress_key: T.nilable(String)).returns(Integer)
       end
-      def load_insert_select(conn, graph_name:, label_name:, label:, table_name:, object_type:, batch_size:, progress_key:)
+      def load_insert_select(conn, graph_name:, label_name:, label:, table_name:, object_type:, batch_size:,
+                             progress_key:)
         qualified = GraphAdmin.quote_qualified(graph_name, label_name)
         seq_name = "#{GraphAdmin.quote_ident(graph_name)}.#{GraphAdmin.quote_ident(T.cast(label[:seq_name], String))}"
         total = T.let(0, Integer)
@@ -315,7 +318,10 @@ module ApacheAge
         # re-selects the same first batch every iteration and spins forever, so a cursor
         # is required rather than optional (the only strategy that can terminate without
         # one is :insert_select, whose break keys on conflict-driven zero inserts).
-        Kernel.raise ArgumentError, 'progress_key is required for :copy_stdin — the batch loop cannot advance without a cursor' if progress_key.nil?
+        if progress_key.nil?
+          Kernel.raise ArgumentError,
+                       'progress_key is required for :copy_stdin — the batch loop cannot advance without a cursor'
+        end
 
         qualified = GraphAdmin.quote_qualified(graph_name, label_name)
         label_id = T.cast(label[:id], Integer)
@@ -381,7 +387,10 @@ module ApacheAge
       def load_cypher_merge(conn, graph_name:, label_name:, table_name:, object_type:, batch_size:, progress_key:)
         # Same cursor requirement as :copy_stdin — MERGE is idempotent per row but the
         # batch window only advances via the progress cursor, so nil spins forever.
-        Kernel.raise ArgumentError, 'progress_key is required for :cypher_merge — the batch loop cannot advance without a cursor' if progress_key.nil?
+        if progress_key.nil?
+          Kernel.raise ArgumentError,
+                       'progress_key is required for :cypher_merge — the batch loop cannot advance without a cursor'
+        end
 
         total = T.let(0, Integer)
 
@@ -411,11 +420,15 @@ module ApacheAge
         end
       end
 
-      sig { params(conn: PG::Connection, table_name: String, progress_key: T.nilable(String), batch_size: Integer).returns(PG::Result) }
+      sig do
+        params(conn: PG::Connection, table_name: String, progress_key: T.nilable(String),
+               batch_size: Integer).returns(PG::Result)
+      end
       def fetch_vertex_batch(conn, table_name:, progress_key:, batch_size:)
         last_uuid = progress_key ? ProgressTracker.load_progress(conn, progress_key) : nil
         where = last_uuid ? "AND new_id > '#{escape_uuid(last_uuid)}'" : ''
-        BulkLoad.query(conn, "SELECT new_id FROM _migration_pk_map WHERE table_name = '#{table_name}' #{where} ORDER BY new_id LIMIT #{batch_size}")
+        BulkLoad.query(conn,
+                       "SELECT new_id FROM _migration_pk_map WHERE table_name = '#{table_name}' #{where} ORDER BY new_id LIMIT #{batch_size}")
       end
 
       sig { params(rows: PG::Result, object_type: String).returns(T::Array[String]) }
@@ -451,6 +464,7 @@ module ApacheAge
 
     module EdgeLoader
       extend T::Sig
+
       module_function
 
       # Bundles the stable SQL-state fields forwarded through the insert-select
@@ -462,6 +476,7 @@ module ApacheAge
       # (Sorbet/ForbidTStruct cop gates new T::Struct usage).
       class EdgeConfig
         extend T::Sig
+
         sig { returns(Integer) }
         attr_reader :label_id
 
@@ -571,7 +586,8 @@ module ApacheAge
           total = T.must(result_cm[0])
           skipped = T.must(result_cm[1])
         else
-          Kernel.raise ArgumentError, "Unknown strategy: #{strategy}. Note: :copy_stdin not supported for edges — use :insert_select."
+          Kernel.raise ArgumentError,
+                       "Unknown strategy: #{strategy}. Note: :copy_stdin not supported for edges — use :insert_select."
         end
 
         elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start
@@ -626,7 +642,8 @@ module ApacheAge
         done = inserted.zero?
         unless done
           if progress_key
-            save_last_edge_id(conn, dblink_conn: config.dblink_conn, join_table: config.join_table, id_where:, progress_key:, total:, skipped:)
+            save_last_edge_id(conn, dblink_conn: config.dblink_conn, join_table: config.join_table, id_where:,
+                                    progress_key:, total:, skipped:)
           end
           ApacheAge.logger.info("[edges] #{edge_label} (#{config.join_table}): #{total} created, #{skipped} skipped (#{inserted} this batch)")
           done = inserted < batch_size
@@ -702,7 +719,10 @@ module ApacheAge
                                   "SELECT id FROM dblink('#{dblink_conn}',
             'SELECT id FROM #{join_table} #{id_where} ORDER BY id DESC LIMIT 1')
             AS t(id uuid)")
-        ProgressTracker.save_edge_progress(conn, T.must(progress_key), last_row.first['id'], total, skipped) if last_row.ntuples.positive?
+        return unless last_row.ntuples.positive?
+
+        ProgressTracker.save_edge_progress(conn, T.must(progress_key), last_row.first['id'], total,
+                                           skipped)
       end
 
       sig do
@@ -758,7 +778,8 @@ module ApacheAge
                                 batch_size:)
         last_id = progress_key ? ProgressTracker.load_edge_progress(conn, progress_key) : ''
         id_where = last_id.empty? ? '' : "WHERE id > '#{last_id.gsub("'", "''")}'::uuid"
-        fetch_edge_rows(conn, dblink_conn:, join_table:, from_col:, to_col:, from_table:, to_table:, property_cols:, id_where:, batch_size:)
+        fetch_edge_rows(conn, dblink_conn:, join_table:, from_col:, to_col:, from_table:, to_table:, property_cols:,
+                              id_where:, batch_size:)
       end
 
       sig do
@@ -767,7 +788,8 @@ module ApacheAge
                property_cols: T::Array[T::Hash[Symbol, String]], id_where: String,
                batch_size: Integer).returns(PG::Result)
       end
-      def fetch_edge_rows(conn, dblink_conn:, join_table:, from_col:, to_col:, from_table:, to_table:, property_cols:, id_where:, batch_size:)
+      def fetch_edge_rows(conn, dblink_conn:, join_table:, from_col:, to_col:, from_table:, to_table:, property_cols:,
+                          id_where:, batch_size:)
         col_select, col_dblink, col_types = render_property_cols(property_cols)
         BulkLoad.query(conn, <<~SQL.squish)
           SELECT t.id, t.#{from_col}, t.#{to_col}#{col_select},
@@ -787,7 +809,10 @@ module ApacheAge
         SQL
       end
 
-      sig { params(conn: PG::Connection, graph_name: String, edge_label: String, rows: PG::Result, property_cols: T::Array[T::Hash[Symbol, String]], cypher_batch: Integer).void }
+      sig do
+        params(conn: PG::Connection, graph_name: String, edge_label: String, rows: PG::Result,
+               property_cols: T::Array[T::Hash[Symbol, String]], cypher_batch: Integer).void
+      end
       def execute_edge_cypher_batches(conn, graph_name:, edge_label:, rows:, property_cols:, cypher_batch:)
         rows.each_slice(cypher_batch) do |slice|
           statements = build_edge_cypher_statements(slice, edge_label:, property_cols:)
@@ -801,7 +826,10 @@ module ApacheAge
         end
       end
 
-      sig { params(slice: T::Array[T::Hash[String, String]], edge_label: String, property_cols: T::Array[T::Hash[Symbol, String]]).returns(T::Array[String]) }
+      sig do
+        params(slice: T::Array[T::Hash[String, String]], edge_label: String,
+               property_cols: T::Array[T::Hash[Symbol, String]]).returns(T::Array[String])
+      end
       def build_edge_cypher_statements(slice, edge_label:, property_cols:)
         slice.each_with_index.map do |row, idx|
           from = T.must(row['from_new_id']).gsub("'", "''")
@@ -827,6 +855,7 @@ module ApacheAge
 
     module IdMapping
       extend T::Sig
+
       module_function
 
       # Builds a temp table mapping every vertex's object_id (UUID) to its AGE graphid.
@@ -846,7 +875,9 @@ module ApacheAge
         SQL
 
         all_labels = GraphAdmin.labels(conn)
-        vertex_labels = all_labels.reject { |l| T.cast(l[:kind], String) != 'v' || T.cast(l[:name], String).start_with?('_ag_label_') }
+        vertex_labels = all_labels.reject do |l|
+          T.cast(l[:kind], String) != 'v' || T.cast(l[:name], String).start_with?('_ag_label_')
+        end
 
         count = T.let(0, Integer)
         vertex_labels.each do |lbl|
@@ -871,8 +902,9 @@ module ApacheAge
         return {} if object_ids.empty?
 
         placeholders = object_ids.each_with_index.map { |_, i| "$#{i + 1}" }
-                                                 .join(', ')
-        rows = BulkLoad.query(conn, "SELECT object_id, graphid FROM _age_uuid_graphid WHERE object_id IN (#{placeholders})", object_ids)
+                                 .join(', ')
+        rows = BulkLoad.query(conn,
+                              "SELECT object_id, graphid FROM _age_uuid_graphid WHERE object_id IN (#{placeholders})", object_ids)
         result = {}
         rows.each { |r| result[r['object_id']] = BulkLoad.parse_int(r['graphid'], 10) }
         result
@@ -903,6 +935,7 @@ module ApacheAge
 
     module ProgressTracker
       extend T::Sig
+
       module_function
 
       sig { params(conn: PG::Connection).void }
@@ -932,7 +965,8 @@ module ApacheAge
 
       sig { params(conn: PG::Connection, label_name: String).returns(T.nilable(String)) }
       def load_progress(conn, label_name)
-        row = BulkLoad.query(conn, 'SELECT last_object_id FROM _age_vertex_migration_progress WHERE label_name = $1', [label_name])
+        row = BulkLoad.query(conn, 'SELECT last_object_id FROM _age_vertex_migration_progress WHERE label_name = $1',
+                             [label_name])
         return nil if row.ntuples.zero?
 
         val = row.first['last_object_id']
@@ -960,7 +994,8 @@ module ApacheAge
 
       sig { params(conn: PG::Connection, join_table: String).returns(String) }
       def load_edge_progress(conn, join_table)
-        row = BulkLoad.query(conn, 'SELECT last_source_id FROM _age_edge_migration_progress WHERE join_table = $1', [join_table])
+        row = BulkLoad.query(conn, 'SELECT last_source_id FROM _age_edge_migration_progress WHERE join_table = $1',
+                             [join_table])
         return '' if row.ntuples.zero?
 
         row.first['last_source_id']

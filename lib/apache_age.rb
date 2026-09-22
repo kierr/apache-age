@@ -153,7 +153,7 @@ module ApacheAge
 
       if cascade
         log(:warn, 'age_graph.drop_cascade', graph_name: graph,
-                 message: 'CASCADE drop will destroy all labels and data in this graph')
+                                             message: 'CASCADE drop will destroy all labels and data in this graph')
       end
       Connection.execute("SELECT ag_catalog.drop_graph('#{cypher_escape(graph)}', #{cascade})")
       reset_graph_availability!
@@ -209,12 +209,12 @@ module ApacheAge
       return [] unless graph_available?
 
       col_def = if columns.is_a?(String)
-                   validate_column_def!(columns)
-                   columns
-                 else
-                   columns.each { |c| validate_column_name!(c) }
-                   columns.map { |c| "#{c} ag_catalog.agtype" }.join(', ')
-                 end
+                  validate_column_def!(columns)
+                  columns
+                else
+                  columns.each { |c| validate_column_name!(c) }
+                  columns.map { |c| "#{c} ag_catalog.agtype" }.join(', ')
+                end
       col_names = columns.is_a?(String) ? columns.split(',').map { |c| c.strip.split.first } : columns
 
       validate_graph_name!(graph_name) unless graph_name.match?(VALID_GRAPH_NAME)
@@ -232,7 +232,7 @@ module ApacheAge
         elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
         row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.unsafe(raw_result).length
         log(:info, 'age_graph.query_cypher', graph_name: graph_name,
-                 query_snippet: cypher[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
+                                             query_snippet: cypher[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
       end
 
       rows = if raw_result.is_a?(PG::Result)
@@ -286,7 +286,7 @@ module ApacheAge
       # Cypher string are bound via SQL parameters ($1, $2), preventing
       # SQL-level injection. After this call, cypher(NULL, NULL) uses
       # the prepared statement.
-      prepare_sql = "SELECT * FROM ag_catalog.age_prepare_cypher($1, $2)"
+      prepare_sql = 'SELECT * FROM ag_catalog.age_prepare_cypher($1, $2)'
       pg_conn.exec_params(prepare_sql, [graph_name, cypher])
 
       # Encode Cypher parameters as agtype literals.
@@ -306,8 +306,8 @@ module ApacheAge
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
       row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : 0
       log(:info, 'age_graph.prepared_cypher', graph_name: graph_name,
-               query_snippet: cypher[0, 80], elapsed_ms: (elapsed * 1000).round(1),
-               row_count: row_count, param_count: params.size)
+                                              query_snippet: cypher[0, 80], elapsed_ms: (elapsed * 1000).round(1),
+                                              row_count: row_count, param_count: params.size)
       raw_result
     rescue StandardError => e
       log(:error, 'age_graph.prepared_cypher_failed', error_class: e.class.name, error_message: e.message)
@@ -332,7 +332,8 @@ module ApacheAge
       execute_cypher(cypher)
       true
     rescue StandardError => e
-      log(:error, 'age_graph.create_vertex_failed', error_class: e.class.name, error_message: e.message, backtrace: e.backtrace&.first(5))
+      log(:error, 'age_graph.create_vertex_failed', error_class: e.class.name, error_message: e.message,
+                                                    backtrace: e.backtrace&.first(5))
       false
     end
 
@@ -353,7 +354,8 @@ module ApacheAge
       log(:warn, 'age_graph.edge_creation_failed', error_class: e.class.name, error_message: e.message)
       false
     rescue StandardError => e
-      log(:error, 'age_graph.create_edge_failed', error_class: e.class.name, error_message: e.message, backtrace: e.backtrace&.first(5))
+      log(:error, 'age_graph.create_edge_failed', error_class: e.class.name, error_message: e.message,
+                                                  backtrace: e.backtrace&.first(5))
       false
     end
 
@@ -506,14 +508,14 @@ module ApacheAge
     end
 
     sig { params(block: T.proc.returns(T.untyped)).returns(T.untyped) }
-    def with_age_session(&block)
+    def with_age_session(&)
       ensure_age_session
       yield
     end
 
     sig { params(identity: String, block: T.proc.returns(T.untyped)).returns(T::Boolean) }
-    def with_savepoint(identity, &block)
-      ApacheAge::Connection.with_savepoint(identity) { yield }
+    def with_savepoint(identity, &)
+      ApacheAge::Connection.with_savepoint(identity, &)
     rescue EdgeCreationError
       false
     rescue ArgumentError
@@ -568,12 +570,10 @@ module ApacheAge
 
       AgtypeParser.parse(value)
     rescue AgtypeParser::ParseError => e
-      if lenient
-        log(:warn, 'age_graph.agtype_parse_failed', value: T.must(value)[0..80], error: e.message)
-        nil
-      else
-        raise
-      end
+      raise unless lenient
+
+      log(:warn, 'age_graph.agtype_parse_failed', value: T.must(value)[0..80], error: e.message)
+      nil
     end
 
     # Parse an agtype numeric value. Supports ::numeric (BigDecimal),
@@ -587,6 +587,7 @@ module ApacheAge
       parsed = AgtypeParser.parse(value.strip)
       return nil if parsed.nil?
       return parsed if parsed.is_a?(Numeric)
+
       nil
     rescue AgtypeParser::ParseError
       nil
@@ -663,8 +664,14 @@ module ApacheAge
     sig { params(name: String).void }
     def validate_graph_name!(name)
       Kernel.raise ArgumentError, "Invalid AGE graph name '#{name}'" unless name.match?(VALID_GRAPH_NAME)
-      Kernel.raise ArgumentError, "AGE graph name exceeds #{MAX_GRAPH_NAME_LENGTH} characters" if name.length > MAX_GRAPH_NAME_LENGTH
-      Kernel.raise ArgumentError, "AGE graph name too short (min #{MIN_GRAPH_NAME_LENGTH} chars)" if name.length < MIN_GRAPH_NAME_LENGTH
+      if name.length > MAX_GRAPH_NAME_LENGTH
+        Kernel.raise ArgumentError,
+                     "AGE graph name exceeds #{MAX_GRAPH_NAME_LENGTH} characters"
+      end
+      return unless name.length < MIN_GRAPH_NAME_LENGTH
+
+      Kernel.raise ArgumentError,
+                   "AGE graph name too short (min #{MIN_GRAPH_NAME_LENGTH} chars)"
     end
 
     sig { params(object_id: T.untyped).returns(String) }
@@ -771,8 +778,12 @@ module ApacheAge
 
       parts = properties.filter_map do |key, value|
         next if value.nil?
+
         Kernel.raise ArgumentError, "Invalid property key '#{key}'" unless key.to_s.match?(VALID_PROPERTY_KEY)
-        Kernel.raise ArgumentError, "Unsupported property value type '#{value.class}'" unless value.is_a?(String) || value.is_a?(Numeric) || value.is_a?(TrueClass) || value.is_a?(FalseClass)
+        unless value.is_a?(String) || value.is_a?(Numeric) || value.is_a?(TrueClass) || value.is_a?(FalseClass)
+          Kernel.raise ArgumentError,
+                       "Unsupported property value type '#{value.class}'"
+        end
 
         val = case value
               when String then "'#{cypher_escape(value)}'"
@@ -807,7 +818,7 @@ module ApacheAge
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
       row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.unsafe(raw_result).length
       log(:info, 'age_graph.run_cypher', graph_name: graph_name,
-               query_snippet: cypher_body[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
+                                         query_snippet: cypher_body[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
       if raw_result.is_a?(PG::Result)
         raw_result.map { |row| row }
       else
@@ -831,7 +842,10 @@ module ApacheAge
       tag = "age_#{Kernel.rand(1_000_000)}"
       while cypher.include?("$#{tag}$")
         attempts += 1
-        raise CypherExecutionError, "Could not find unique dollar-quote delimiter after #{MAX_DOLLAR_QUOTE_ATTEMPTS} attempts" if attempts >= MAX_DOLLAR_QUOTE_ATTEMPTS
+        if attempts >= MAX_DOLLAR_QUOTE_ATTEMPTS
+          raise CypherExecutionError,
+                "Could not find unique dollar-quote delimiter after #{MAX_DOLLAR_QUOTE_ATTEMPTS} attempts"
+        end
 
         tag = "age_#{Kernel.rand(1_000_000)}"
       end

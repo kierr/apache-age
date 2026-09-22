@@ -76,8 +76,7 @@ class AgtypeParserTest < Minitest::Test
   end
 
   def test_negative_float
-    assert_in_delta(-2.5, ApacheAge::AgtypeParser.parse('-2.5'), 0.001
-    )
+    assert_in_delta(-2.5, ApacheAge::AgtypeParser.parse('-2.5'), 0.001)
   end
 
   def test_scientific_notation
