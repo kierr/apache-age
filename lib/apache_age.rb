@@ -224,7 +224,7 @@ module ApacheAge
       else
         delimiter = dollar_quote(cypher)
         sql = <<~SQL
-          SELECT ag_catalog.cypher('#{cypher_escape(graph_name)}',
+          SELECT * FROM ag_catalog.cypher('#{cypher_escape(graph_name)}',
             #{delimiter} #{cypher} #{delimiter}) AS (#{col_def})
         SQL
         start_ts = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -328,6 +328,7 @@ module ApacheAge
       # the same label via the object_type property stored on each vertex.
       cypher = <<~CYPHER
         MERGE (v:#{object_type} {object_id: '#{cypher_escape(object_id)}'})
+        RETURN 1 AS result
       CYPHER
       execute_cypher(cypher)
       true
@@ -365,7 +366,7 @@ module ApacheAge
 
       validate_label!(edge_label)
       cypher = build_traverse_cypher([object_id], edge_label, direction)
-      result = execute_cypher(cypher)
+      result = execute_cypher_with_columns(cypher, columns: traverse_columns)
       parse_traverse_results(result)
     rescue StandardError => e
       log(:error, 'age_graph.traverse_failed', error_class: e.class.name, error_message: e.message)
@@ -380,7 +381,7 @@ module ApacheAge
       validate_label!(edge_label)
       object_ids.each_slice(500).flat_map do |batch|
         cypher = build_traverse_cypher(batch, edge_label, direction)
-        result = execute_cypher(cypher)
+        result = execute_cypher_with_columns(cypher, columns: traverse_columns)
         parse_traverse_results(result)
       end
     rescue StandardError => e
@@ -452,7 +453,7 @@ module ApacheAge
       oid = validate_object_id!(object_id)
       return false unless graph_available?
 
-      cypher = "MATCH (v {object_id: '#{cypher_escape(oid)}'}) RETURN count(v) AS cnt"
+      cypher = "MATCH (v {object_id: '#{cypher_escape(oid)}'}) RETURN count(v) AS result"
       result = execute_cypher(cypher)
       row = T.cast(result, T::Array[T::Hash[String, T.untyped]]).first
       cnt = parse_agtype_numeric(row&.fetch('result', row.fetch('cnt', nil)))
@@ -466,7 +467,7 @@ module ApacheAge
       return false unless graph_available?
 
       validate_label!(label)
-      cypher = "MATCH (a {object_id: '#{cypher_escape(from_object_id)}'})-[e:#{label}]->(b {object_id: '#{cypher_escape(to_object_id)}'}) RETURN count(e) AS cnt"
+      cypher = "MATCH (a {object_id: '#{cypher_escape(from_object_id)}'})-[e:#{label}]->(b {object_id: '#{cypher_escape(to_object_id)}'}) RETURN count(e) AS result"
       result = execute_cypher(cypher)
       row = T.cast(result, T::Array[T::Hash[String, T.untyped]]).first
       cnt = parse_agtype_numeric(row&.fetch('result', row.fetch('cnt', nil)))
@@ -480,7 +481,7 @@ module ApacheAge
       return false unless graph_available?
 
       oid = validate_object_id!(object_id)
-      cypher = "MATCH (v {object_id: '#{cypher_escape(oid)}'}) DELETE v"
+      cypher = "MATCH (v {object_id: '#{cypher_escape(oid)}'}) DETACH DELETE v RETURN 1 AS result"
       execute_cypher(cypher)
       true
     rescue StandardError => e
@@ -493,7 +494,7 @@ module ApacheAge
       return false unless graph_available?
 
       validate_label!(label)
-      cypher = "MATCH (a {object_id: '#{cypher_escape(from_object_id)}'})-[e:#{label}]->(b {object_id: '#{cypher_escape(to_object_id)}'}) DELETE e"
+      cypher = "MATCH (a {object_id: '#{cypher_escape(from_object_id)}'})-[e:#{label}]->(b {object_id: '#{cypher_escape(to_object_id)}'}) DELETE e RETURN 1 AS result"
       execute_cypher(cypher)
       true
     rescue StandardError => e
@@ -581,7 +582,7 @@ module ApacheAge
     # Raises ArgumentError for nil input; returns nil for empty strings.
     sig { params(value: T.nilable(String)).returns(T.nilable(Numeric)) }
     def parse_agtype_numeric(value)
-      raise ArgumentError, 'Cannot parse nil as agtype numeric' if value.nil?
+      return nil if value.nil?
       return nil if value.strip.empty?
 
       parsed = AgtypeParser.parse(value.strip)
@@ -726,6 +727,7 @@ module ApacheAge
         MERGE (a:Entity {object_id: '#{cypher_escape(from_id)}'})
         MERGE (b:Entity {object_id: '#{cypher_escape(to_id)}'})
         MERGE (a)-[e:#{label}#{props_clause}]->(b)
+        RETURN 1 AS result
       CYPHER
     end
 
@@ -768,8 +770,13 @@ module ApacheAge
     end
 
     sig { returns(String) }
+    def traverse_columns
+      'object_id ag_catalog.agtype, object_type ag_catalog.agtype'
+    end
+
+    sig { returns(String) }
     def traverse_edges_columns
-      'object_id, object_type, confidence, first_seen, last_seen'
+      'object_id ag_catalog.agtype, object_type ag_catalog.agtype, confidence ag_catalog.agtype, first_seen ag_catalog.agtype, last_seen ag_catalog.agtype'
     end
 
     sig { params(properties: T::Hash[Symbol, T.untyped]).returns(String) }
@@ -800,9 +807,9 @@ module ApacheAge
       run_cypher(cypher_body, columns: 'result ag_catalog.agtype')
     end
 
-    sig { params(cypher_body: String).returns(T.untyped) }
-    def execute_cypher_with_columns(cypher_body)
-      run_cypher(cypher_body, columns: traverse_edges_columns)
+    sig { params(cypher_body: String, columns: String).returns(T.untyped) }
+    def execute_cypher_with_columns(cypher_body, columns: traverse_edges_columns)
+      run_cypher(cypher_body, columns: columns)
     end
 
     sig { params(cypher_body: String, columns: String).returns(T.untyped) }
@@ -810,7 +817,7 @@ module ApacheAge
       validate_graph_name!(graph_name) unless graph_name.match?(VALID_GRAPH_NAME)
       delimiter = dollar_quote(cypher_body)
       sql = <<~SQL
-        SELECT ag_catalog.cypher('#{cypher_escape(graph_name)}',
+        SELECT * FROM ag_catalog.cypher('#{cypher_escape(graph_name)}',
           #{delimiter} #{cypher_body} #{delimiter}) AS (#{columns})
       SQL
       start_ts = Process.clock_gettime(Process::CLOCK_MONOTONIC)
