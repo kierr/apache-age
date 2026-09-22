@@ -166,6 +166,13 @@ When SemanticLogger is present, the gem uses it automatically. Otherwise it fall
 - PostgreSQL with Apache AGE extension installed (tested on 1.7.0 and 1.8.0)
 - `pg` gem
 
+## Contributing
+
+Bug reports and pull requests are welcome on [GitHub](https://github.com/kierr/apache-age).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and development instructions.
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md) code of conduct.
+
 ## License
 
 Apache License 2.0, matching the Apache AGE project.

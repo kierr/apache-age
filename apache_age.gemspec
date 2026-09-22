@@ -24,6 +24,7 @@ Gem::Specification.new do |spec|
     'homepage_uri' => spec.homepage,
     'source_code_uri' => 'https://github.com/kierr/apache-age',
     'changelog_uri' => 'https://github.com/kierr/apache-age/blob/main/CHANGELOG.md',
+    'bug_tracker_uri' => 'https://github.com/kierr/apache-age/issues',
     'rubygems_mfa_required' => 'true'
   }
 
