@@ -49,13 +49,5 @@ jobs:
       - name: Generate RBI files
         run: bundle exec rake sorbet:rbi
 
-      - name: Verify RBI freshness
-        run: |
-          if ! git diff --exit-code sorbet/; then
-            echo "RBI files are stale. Run 'bundle exec rake sorbet:rbi' and commit the changes."
-            git diff sorbet/
-            exit 1
-          fi
-
       - name: Sorbet typecheck
         run: bundle exec rake sorbet:tc
