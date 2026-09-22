@@ -52,12 +52,12 @@ class ApacheAgeInternalHelpersTest < Minitest::Test
   end
 
   def test_dollar_quote_no_collision
-    quote = ApacheAge.send(:dollar_quote, "MATCH (n) RETURN n")
+    quote = ApacheAge.send(:dollar_quote, 'MATCH (n) RETURN n')
     assert_equal '$$', quote
   end
 
   def test_dollar_quote_collision
-    quote = ApacheAge.send(:dollar_quote, "MATCH (n) {name: $$hello$$} RETURN n")
+    quote = ApacheAge.send(:dollar_quote, 'MATCH (n) {name: $$hello$$} RETURN n')
     refute_equal '$$', quote
     assert quote.start_with?('$age_')
   end

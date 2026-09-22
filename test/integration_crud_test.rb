@@ -17,7 +17,7 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
     dbname: 'age_test'
   }.freeze
 
-  GRAPH = 'crud_test_graph'.freeze
+  GRAPH = 'crud_test_graph'
 
   def self.db_available?
     PG.connect(**DB_CONFIG).close
@@ -42,7 +42,11 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
     ApacheAge::Connection.instance_variable_set(:@pg_connection, conn)
     conn.exec('SET search_path = ag_catalog, public')
     conn.exec("LOAD 'age'")
-    conn.exec("SELECT drop_graph('#{GRAPH}', true)") rescue PG::Error
+    begin
+      conn.exec("SELECT drop_graph('#{GRAPH}', true)")
+    rescue StandardError
+      PG::Error
+    end
     conn.exec("SELECT create_graph('#{GRAPH}')")
     ApacheAge.graph_name = GRAPH
     ApacheAge.remove_instance_variable(:@graph_available) if ApacheAge.instance_variable_defined?(:@graph_available)
@@ -54,7 +58,11 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
       tc.synchronize do
         conn = ApacheAge::Connection.instance_variable_get(:@pg_connection)
         if conn.is_a?(PG::Connection)
-          conn.exec("SELECT drop_graph('#{GRAPH}', true)") rescue PG::Error
+          begin
+            conn.exec("SELECT drop_graph('#{GRAPH}', true)")
+          rescue StandardError
+            PG::Error
+          end
           conn.close
         end
         ApacheAge::Connection.instance_variable_set(:@pg_connection, nil)
@@ -91,7 +99,7 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
     # Prepared cypher params don't work with AGE 1.7.0 (cypher(NULL,NULL,...))
     assert_raises(ApacheAge::CypherExecutionError) do
       ApacheAge.query_cypher(
-        "CREATE (:PERSON {name: $name}) RETURN 1",
+        'CREATE (:PERSON {name: $name}) RETURN 1',
         columns: 'result ag_catalog.agtype',
         params: { 'name' => 'Bob' }
       )
@@ -190,7 +198,7 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
   def test_execute_cypher_with_columns_wrong_column_count
     # When columns don't match the Cypher return, AGE raises DatatypeMismatch
     assert_raises(PG::DatatypeMismatch) do
-      ApacheAge.send(:execute_cypher_with_columns, "MATCH ()-[e:KNOWS]->() RETURN e")
+      ApacheAge.send(:execute_cypher_with_columns, 'MATCH ()-[e:KNOWS]->() RETURN e')
     end
   end
 

@@ -18,7 +18,7 @@ class ApacheAgeIntegrationTest < Minitest::Test
     dbname: 'age_test'
   }.freeze
 
-  GRAPH_NAME = 'integration_test_graph'.freeze
+  GRAPH_NAME = 'integration_test_graph'
 
   def self.db_available?
     PG.connect(**DB_CONFIG).close

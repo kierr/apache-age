@@ -26,3 +26,11 @@ Style/ArgumentsForwarding:
 # Would need a documented style guide requiring YARD for all public APIs to reconsider.
 Style/Documentation:
   Enabled: false
+
+# RATIONALE: tapioca's require.rb uses bare rescue LoadError to make optional
+# gems gracefully skip in CI. This is tapioca's standard pattern — the
+# LoadError IS the intended control flow, not a suppressed bug.
+# Would need tapioca to support a different require syntax to reconsider.
+Lint/SuppressedException:
+  Exclude:
+    - 'sorbet/tapioca/require.rb'
