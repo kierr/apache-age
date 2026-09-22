@@ -32,7 +32,7 @@ Gem::Specification.new do |spec|
   spec.executables   = []
   spec.require_paths = ['lib']
 
-  spec.add_dependency 'bigdecimal', '~> 3.1'
+  spec.add_dependency 'bigdecimal', '>= 3.1', '< 5.0'
   spec.add_dependency 'pg', '~> 1.5'
   spec.add_dependency 'sorbet-runtime', '~> 0.5'
 
