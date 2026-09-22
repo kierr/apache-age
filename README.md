@@ -163,7 +163,7 @@ When SemanticLogger is present, the gem uses it automatically. Otherwise it fall
 ## Requirements
 
 - Ruby >= 3.1
-- PostgreSQL with Apache AGE extension installed
+- PostgreSQL with Apache AGE extension installed (tested on 1.7.0 and 1.8.0)
 - `pg` gem
 
 ## License
