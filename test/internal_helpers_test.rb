@@ -70,7 +70,7 @@ class ApacheAgeInternalHelpersTest < Minitest::Test
 
   def test_traverse_edges_columns_format
     cols = ApacheAge.send(:traverse_edges_columns)
-    assert_equal 'object_id, object_type, confidence, first_seen, last_seen', cols
+    assert_equal 'object_id ag_catalog.agtype, object_type ag_catalog.agtype, confidence ag_catalog.agtype, first_seen ag_catalog.agtype, last_seen ag_catalog.agtype', cols
   end
 
   def test_validate_graph_name_valid
@@ -209,8 +209,8 @@ class ApacheAgeInternalHelpersTest < Minitest::Test
     assert_in_delta 123.45, parsed, 0.001
   end
 
-  def test_parse_agtype_numeric_nil_raises
-    assert_raises(ArgumentError) { ApacheAge.send(:parse_agtype_numeric, nil) }
+  def test_parse_agtype_numeric_nil
+    assert_nil ApacheAge.send(:parse_agtype_numeric, nil)
   end
 
   def test_parse_agtype_numeric_empty

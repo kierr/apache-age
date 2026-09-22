@@ -630,8 +630,8 @@ class ApacheAgeModuleTest < Minitest::Test
 
   # --- parse_agtype_numeric ---
 
-  def test_parse_agtype_numeric_nil_raises
-    assert_raises(ArgumentError) { ApacheAge.parse_agtype_numeric(nil) }
+  def test_parse_agtype_numeric_nil
+    assert_nil ApacheAge.send(:parse_agtype_numeric, nil)
   end
 
   # --- Validation ---
