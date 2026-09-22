@@ -97,11 +97,13 @@ class ApacheAgeEdgeTest < Minitest::Test
     assert_kind_of String, e.inspect
   end
 
-  def test_edge_to_agtype
-    e = ApacheAge::Edge.new(id: 1, label: 'KNOWS', start_id: 100, end_id: 200)
+  def test_edge_to_agtype_with_properties
+    e = ApacheAge::Edge.new(id: 1, label: 'KNOWS', start_id: 100, end_id: 200, properties: { 'since' => 2020 })
     ag = e.to_agtype
     assert_includes ag, '1'
     assert_includes ag, 'KNOWS'
+    assert_includes ag, 'since'
+    assert_includes ag, '2020'
   end
 end
 
@@ -213,6 +215,8 @@ class ApacheAgeForwardTraverseResultTest < Minitest::Test
   def test_bracket_access
     ftr = ApacheAge::ForwardTraverseResult.new(source_object_id: 'a', target_object_id: 'b', target_object_type: 'vertex')
     assert_equal 'a', ftr[:source_object_id]
+    assert_equal 'b', ftr[:target_object_id]
+    assert_equal 'vertex', ftr[:target_object_type]
     assert_nil ftr[:nonexistent]
   end
 end
@@ -228,6 +232,8 @@ class ApacheAgeReverseTraverseResultTest < Minitest::Test
   def test_bracket_access
     rtr = ApacheAge::ReverseTraverseResult.new(source_object_id: 'a', target_object_id: 'b', source_object_type: 'vertex')
     assert_equal 'a', rtr[:source_object_id]
+    assert_equal 'b', rtr[:target_object_id]
+    assert_equal 'vertex', rtr[:source_object_type]
     assert_nil rtr[:nonexistent]
   end
 end
