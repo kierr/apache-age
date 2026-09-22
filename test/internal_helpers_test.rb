@@ -51,6 +51,28 @@ class ApacheAgeInternalHelpersTest < Minitest::Test
     assert_includes encoded, '30'
   end
 
+  def test_dollar_quote_no_collision
+    quote = ApacheAge.send(:dollar_quote, "MATCH (n) RETURN n")
+    assert_equal '$$', quote
+  end
+
+  def test_dollar_quote_collision
+    quote = ApacheAge.send(:dollar_quote, "MATCH (n) {name: $$hello$$} RETURN n")
+    refute_equal '$$', quote
+    assert quote.start_with?('$age_')
+  end
+
+  def test_reset_graph_availability
+    ApacheAge.instance_variable_set(:@graph_available, true)
+    ApacheAge.send(:reset_graph_availability!)
+    assert_nil ApacheAge.instance_variable_get(:@graph_available)
+  end
+
+  def test_traverse_edges_columns_format
+    cols = ApacheAge.send(:traverse_edges_columns)
+    assert_equal 'object_id, object_type, confidence, first_seen, last_seen', cols
+  end
+
   def test_validate_graph_name_valid
     assert_silent { ApacheAge.send(:validate_graph_name!, 'mygraph') }
     assert_silent { ApacheAge.send(:validate_graph_name!, 'Graph_1') }
@@ -196,7 +218,19 @@ class ApacheAgeInternalHelpersTest < Minitest::Test
   end
 
   def test_parse_agtype_numeric_invalid
-    # ParseError is rescued and returns nil
     assert_nil ApacheAge.send(:parse_agtype_numeric, 'not_a_number')
+  end
+
+  def test_build_properties_clause_empty
+    # Empty hash returns empty string — the caller wraps in {} when needed
+    clause = ApacheAge.send(:build_properties_clause, {})
+    assert_equal '', clause
+  end
+
+  def test_build_properties_clause_with_values
+    clause = ApacheAge.send(:build_properties_clause, { 'name' => 'Alice', 'age' => 30 })
+    assert_includes clause, 'name'
+    assert_includes clause, 'Alice'
+    assert_includes clause, 'age'
   end
 end
