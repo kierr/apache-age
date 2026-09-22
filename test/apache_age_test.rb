@@ -179,7 +179,7 @@ class ApacheAgeGraphAvailableTest < Minitest::Test
     original = ApacheAge.graph_name
     begin
       ApacheAge.graph_name = ''
-      assert_equal [], ApacheAge.traverse_batch(['a', 'b'], 'LINKS')
+      assert_equal [], ApacheAge.traverse_batch(%w[a b], 'LINKS')
     ensure
       ApacheAge.graph_name = original
     end
@@ -278,7 +278,7 @@ class ApacheAgeEncodingTest < Minitest::Test
   end
 end
 
-class ApacheAgeConnectionTest < Minitest::Test
+class ApacheAgeConnectionBasicTest < Minitest::Test
   def test_disconnect_idempotent
     # Disconnecting when already disconnected should not raise
     ApacheAge::Connection.disconnect
