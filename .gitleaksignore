@@ -1,0 +1,5 @@
+# Gitleaks false positives — tapioca-generated RBI files contain example secrets
+# from gem documentation and RBS signatures (UUIDs, example passwords).
+# These are not real credentials.
+ac257ce0a4fe5cedfa0493447db2e79ec57ff25f:sorbet/rbi/gems/semantic_logger@4.18.0.rbi:generic-api-key:184
+ac257ce0a4fe5cedfa0493447db2e79ec57ff25f:sorbet/rbi/gems/uri@1.1.1.rbi:generic-api-key:1168

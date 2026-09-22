@@ -1,0 +1,3 @@
+# Tapioca-generated RBI files — mark as generated so GitHub language stats
+# and diffs treat them as non-primary content.
+sorbet/rbi/** linguist-generated
