@@ -1,4 +1,4 @@
-# typed: strong
+# typed: true
 # frozen_string_literal: true
 
 # Railtie auto-loads when ActiveRecord::Base is defined.

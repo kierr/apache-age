@@ -1,4 +1,4 @@
-# typed: strong
+# typed: strict
 # frozen_string_literal: true
 
 module ApacheAge
@@ -52,13 +52,13 @@ module ApacheAge
       end
     end
 
-    @max_depth = DEFAULT_MAX_DEPTH
+    @max_depth = T.let(DEFAULT_MAX_DEPTH, Integer)
 
     sig { params(input: String).void }
     def initialize(input)
       @input = input
-      @pos = 0
-      @depth = 0
+      @pos = T.let(0, Integer)
+      @depth = T.let(0, Integer)
     end
 
     sig { returns(T.untyped) }
@@ -389,7 +389,7 @@ module ApacheAge
 
       c = @input[@pos]
       @pos += 1
-      c
+      T.must(c)
     end
 
     sig { void }

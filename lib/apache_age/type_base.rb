@@ -9,20 +9,20 @@ module ApacheAge
 
     sig { returns(T::Array[Symbol]) }
     def fields
-      self.class::FIELDS
+      T.cast(T.unsafe(self).class.const_get(:FIELDS), T::Array[Symbol])
     end
 
     # Access a field by name (String or Symbol).
     sig { params(key: T.any(String, Symbol)).returns(T.untyped) }
     def [](key)
       sym_key = key.to_sym
-      send(sym_key) if fields.include?(sym_key)
+      T.unsafe(self).send(sym_key) if fields.include?(sym_key)
     end
 
     # Return a Hash representation of all declared fields.
     sig { returns(T::Hash[Symbol, T.untyped]) }
     def to_h
-      fields.to_h { |f| [f, send(f)] }
+      fields.to_h { |f| [f, T.unsafe(self).send(f)] }
     end
   end
 end

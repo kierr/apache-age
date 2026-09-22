@@ -1,4 +1,4 @@
-# typed: strong
+# typed: strict
 # frozen_string_literal: true
 
 require 'pg'
@@ -15,6 +15,8 @@ module ApacheAge
     # :active_record — always use ActiveRecord::Base.connection
     # :pg — always use the explicit PG::Connection (set via pg_connection=)
     @connection_mode = T.let(:auto, Symbol)
+    @pg_connection = T.let(nil, T.nilable(PG::Connection))
+    @pg_mutex = T.let(Mutex.new, Mutex)
 
     class << self
       extend T::Sig
@@ -44,7 +46,7 @@ module ApacheAge
         when :active_record then true
         when :pg then false
         else # :auto
-          defined?(ActiveRecord::Base) && !@pg_connection
+          !!(defined?(ActiveRecord::Base) && !@pg_connection)
         end
       end
 
@@ -86,7 +88,7 @@ module ApacheAge
         if active_record?
           ActiveRecord::Base.connection.transaction_open?
         else
-          pg_connection.transaction_status != PG::Connection::PQTRANS_IDLE
+          pg_connection.transaction_status != PG::Constants::PQTRANS_IDLE
         end
       end
 
@@ -107,9 +109,11 @@ module ApacheAge
       def disconnect
         return unless @pg_connection
 
-        @pg_mutex ||= T.let(Mutex.new, T.nilable(Mutex))
         @pg_mutex.synchronize do
-          next unless @pg_connection
+          # RATIONALE: Sorbet narrows @pg_connection to PG::Connection after the
+          # guard above, but another thread can nil it between the guard and
+          # this synchronize. T.unsafe is the honest annotation.
+          next unless T.unsafe(@pg_connection)
 
           begin
             @pg_connection.close
@@ -123,13 +127,11 @@ module ApacheAge
       # Set the standalone PG::Connection. Use this for non-AR setups.
       sig { params(conn: PG::Connection).void }
       def pg_connection=(conn)
-        @pg_mutex ||= T.let(Mutex.new, T.nilable(Mutex))
         @pg_mutex.synchronize { @pg_connection = conn }
       end
 
       sig { returns(PG::Connection) }
       def pg_connection
-        @pg_mutex ||= T.let(Mutex.new, T.nilable(Mutex))
         @pg_mutex.synchronize do
           @pg_connection || Kernel.raise(
             ArgumentError,

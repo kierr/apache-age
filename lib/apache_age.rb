@@ -1,4 +1,4 @@
-# typed: strong
+# typed: strict
 # frozen_string_literal: true
 
 require 'bigdecimal'
@@ -40,13 +40,13 @@ module ApacheAge
   NEGATIVE_CACHE_TTL = 30
   MAX_DOLLAR_QUOTE_ATTEMPTS = 100
 
+  @graph_name = T.let('apache_age', String)
+  @logger = T.let(Logger.new($stdout), ::Logger)
+  @pg_connection = T.let(nil, T.nilable(PG::Connection))
+  @pg_mutex = T.let(Mutex.new, Mutex)
+
   class << self
     extend T::Sig
-
-    @graph_name = T.let('apache_age', String)
-    @logger = T.let(Logger.new($stdout), ::Logger)
-    @pg_connection = T.let(nil, T.nilable(PG::Connection))
-    @pg_mutex = T.let(Mutex.new, Mutex)
 
     sig { returns(String) }
     attr_accessor :graph_name
@@ -60,7 +60,7 @@ module ApacheAge
     # (which provides a connection pool) instead.
     sig { params(conn: T.nilable(PG::Connection)).void }
     def connection=(conn)
-      @pg_mutex.synchronize { @pg_connection = conn }
+      @pg_mutex.synchronize { @pg_connection = T.let(conn, T.nilable(PG::Connection)) }
     end
 
     sig { returns(T.nilable(PG::Connection)) }
@@ -85,7 +85,6 @@ module ApacheAge
 
       # Register the connection so subsequent queries find it
       self.connection = pg_conn if conn
-      pg_conn = T.cast(pg_conn, PG::Connection)
 
       begin
         if create_extension
@@ -102,7 +101,7 @@ module ApacheAge
         rescue StandardError
           nil
         end
-        raise GraphLifecycleError, "Failed to set up AGE connection: #{e.message}", e
+        raise GraphLifecycleError, "Failed to set up AGE connection: #{e.message}"
       end
       log(:info, 'age_graph.setup_connection', message: 'AGE extension loaded and search_path set')
     end
@@ -139,7 +138,7 @@ module ApacheAge
       reset_graph_availability!
       log(:info, 'age_graph.created', graph_name: graph)
     rescue StandardError => e
-      raise GraphLifecycleError, "Failed to create graph '#{graph}': #{e.message}", e
+      raise GraphLifecycleError, "Failed to create graph '#{graph}': #{e.message}"
     end
 
     # Drop a graph. Raises GraphLifecycleError on failure.
@@ -160,7 +159,7 @@ module ApacheAge
       reset_graph_availability!
       log(:info, 'age_graph.dropped', graph_name: graph, cascade: cascade)
     rescue StandardError => e
-      raise GraphLifecycleError, "Failed to drop graph '#{graph}': #{e.message}", e
+      raise GraphLifecycleError, "Failed to drop graph '#{graph}': #{e.message}"
     end
 
     # Check whether a specific graph exists. Does not use the negative cache.
@@ -173,7 +172,7 @@ module ApacheAge
       if result.is_a?(PG::Result)
         T.cast(result.first, T::Hash[String, T.untyped])['count'].to_s.to_i.positive?
       else
-        T.cast(result, T.untyped).first&.fetch('count', 0).to_i.positive?
+        T.unsafe(result).first&.fetch('count', 0).to_i.positive?
       end
     rescue StandardError
       false
@@ -231,7 +230,7 @@ module ApacheAge
         start_ts = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         raw_result = Connection.execute(sql)
         elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
-        row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.cast(raw_result, T.untyped).length
+        row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.unsafe(raw_result).length
         log(:info, 'age_graph.query_cypher', graph_name: graph_name,
                  query_snippet: cypher[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
       end
@@ -239,7 +238,7 @@ module ApacheAge
       rows = if raw_result.is_a?(PG::Result)
                raw_result.map { |row| row }
              else
-               T.cast(raw_result, T.untyped).to_a
+               T.unsafe(raw_result).to_a
              end
 
       parse_query_results(rows, T.cast(col_names, T::Array[String]))
@@ -454,7 +453,7 @@ module ApacheAge
       cypher = "MATCH (v {object_id: '#{cypher_escape(oid)}'}) RETURN count(v) AS cnt"
       result = execute_cypher(cypher)
       row = T.cast(result, T::Array[T::Hash[String, T.untyped]]).first
-      cnt = parse_agtype_numeric(row&.fetch('result', row&.fetch('cnt', nil)))
+      cnt = parse_agtype_numeric(row&.fetch('result', row.fetch('cnt', nil)))
       cnt ? cnt.to_i.positive? : false
     rescue StandardError
       false
@@ -468,7 +467,7 @@ module ApacheAge
       cypher = "MATCH (a {object_id: '#{cypher_escape(from_object_id)}'})-[e:#{label}]->(b {object_id: '#{cypher_escape(to_object_id)}'}) RETURN count(e) AS cnt"
       result = execute_cypher(cypher)
       row = T.cast(result, T::Array[T::Hash[String, T.untyped]]).first
-      cnt = parse_agtype_numeric(row&.fetch('result', row&.fetch('cnt', nil)))
+      cnt = parse_agtype_numeric(row&.fetch('result', row.fetch('cnt', nil)))
       cnt ? cnt.to_i.positive? : false
     rescue StandardError
       false
@@ -541,14 +540,14 @@ module ApacheAge
     # without breaking the init workflow.
     sig { returns(T::Boolean) }
     def graph_available?
-      return false unless @graph_name && !@graph_name.empty?
+      return false if @graph_name.empty?
       return false unless @graph_name.match?(VALID_GRAPH_NAME)
 
-      if @graph_available.nil? || (@graph_available == false && @graph_available_checked_at && Time.now - T.must(@graph_available_checked_at) > NEGATIVE_CACHE_TTL)
+      if @graph_available.nil? || (@graph_available == false && @graph_available_checked_at && Time.now - @graph_available_checked_at > NEGATIVE_CACHE_TTL)
         @graph_available_checked_at = Time.now
         @graph_available = check_graph_exists?
       end
-      T.must(@graph_available)
+      @graph_available
     end
 
     # --- Agtype parsing ---
@@ -570,7 +569,7 @@ module ApacheAge
       AgtypeParser.parse(value)
     rescue AgtypeParser::ParseError => e
       if lenient
-        log(:warn, 'age_graph.agtype_parse_failed', value: value[0..80], error: e.message)
+        log(:warn, 'age_graph.agtype_parse_failed', value: T.must(value)[0..80], error: e.message)
         nil
       else
         raise
@@ -777,7 +776,6 @@ module ApacheAge
 
         val = case value
               when String then "'#{cypher_escape(value)}'"
-      when Symbol then agtype_encode(value.to_s)
               when TrueClass, FalseClass then value.to_s
               else value.to_f == value.to_i ? value.to_i.to_s : value.to_f.to_s
               end
@@ -807,14 +805,14 @@ module ApacheAge
       start_ts = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       raw_result = ApacheAge::Connection.execute(sql)
       elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - start_ts
-      row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.cast(raw_result, T.untyped).length
+      row_count = raw_result.is_a?(PG::Result) ? raw_result.ntuples : T.unsafe(raw_result).length
       log(:info, 'age_graph.run_cypher', graph_name: graph_name,
                query_snippet: cypher_body[0, 80], elapsed_ms: (elapsed * 1000).round(1), row_count: row_count)
       if raw_result.is_a?(PG::Result)
         raw_result.map { |row| row }
       else
         # ActiveRecord::Result
-        T.cast(raw_result, T.untyped).to_a
+        T.unsafe(raw_result).to_a
       end
     end
 
@@ -854,7 +852,7 @@ module ApacheAge
         col_names.each do |col|
           # Use fetch with fallback to symbol key — avoids || which silently
           # replaces boolean false with the symbol-keyed lookup result.
-          raw = hash.fetch(col) { hash[col.to_sym] }
+          raw = hash.fetch(col) { T.unsafe(hash)[col.to_sym] }
           parsed[col] = raw.nil? ? nil : parse_agtype(raw, lenient: true)
         end
         parsed
@@ -867,8 +865,8 @@ module ApacheAge
       rows.map do |row|
         hash = row.is_a?(Hash) ? row : T.cast(row, T::Hash[String, T.untyped])
         EdgeTraverseResult.new(
-          entity_id: parse_agtype(T.must(hash['object_id'])).to_s,
-          object_type: parse_agtype(T.must(hash['object_type'])).to_s,
+          entity_id: parse_agtype(hash['object_id']).to_s,
+          object_type: parse_agtype(hash['object_type']).to_s,
           properties: EdgeProperties.new(
             confidence: parse_agtype_numeric(hash['confidence']),
             first_seen: parse_agtype(hash['first_seen']),
@@ -884,8 +882,8 @@ module ApacheAge
       rows.map do |row|
         hash = row.is_a?(Hash) ? row : T.cast(row, T::Hash[String, T.untyped])
         TraverseResult.new(
-          entity_id: parse_agtype(T.must(hash['object_id'])).to_s,
-          object_type: parse_agtype(T.must(hash['object_type'])).to_s
+          entity_id: parse_agtype(hash['object_id']).to_s,
+          object_type: parse_agtype(hash['object_type']).to_s
         )
       end
     end
@@ -896,9 +894,9 @@ module ApacheAge
       rows.map do |row|
         hash = row.is_a?(Hash) ? row : T.cast(row, T::Hash[String, T.untyped])
         ForwardTraverseResult.new(
-          source_object_id: parse_agtype(T.must(hash['source_object_id'])).to_s,
-          target_object_id: parse_agtype(T.must(hash['target_object_id'])).to_s,
-          target_object_type: parse_agtype(T.must(hash['target_object_type'])).to_s
+          source_object_id: parse_agtype(hash['source_object_id']).to_s,
+          target_object_id: parse_agtype(hash['target_object_id']).to_s,
+          target_object_type: parse_agtype(hash['target_object_type']).to_s
         )
       end
     end
@@ -909,9 +907,9 @@ module ApacheAge
       rows.map do |row|
         hash = row.is_a?(Hash) ? row : T.cast(row, T::Hash[String, T.untyped])
         ReverseTraverseResult.new(
-          source_object_id: parse_agtype(T.must(hash['source_object_id'])).to_s,
-          target_object_id: parse_agtype(T.must(hash['target_object_id'])).to_s,
-          source_object_type: parse_agtype(T.must(hash['source_object_type'])).to_s
+          source_object_id: parse_agtype(hash['source_object_id']).to_s,
+          target_object_id: parse_agtype(hash['target_object_id']).to_s,
+          source_object_type: parse_agtype(hash['source_object_type']).to_s
         )
       end
     end
@@ -919,14 +917,14 @@ module ApacheAge
     sig { returns(Mutex) }
     def mutex
       @mutex ||= T.let(Mutex.new, T.nilable(Mutex))
-      T.must(@mutex)
+      @mutex
     end
 
     sig { params(conn_id: Integer).void }
     def evict_age_loaded_connection(conn_id)
       mutex.synchronize do
         @age_loaded_connections ||= T.let(Set.new, T.nilable(T::Set[Integer]))
-        T.must(@age_loaded_connections).delete(conn_id)
+        @age_loaded_connections.delete(conn_id)
       end
     end
 
@@ -934,7 +932,7 @@ module ApacheAge
     def load_age_if_needed(conn, conn_id)
       mutex.synchronize do
         @age_loaded_connections ||= T.let(Set.new, T.nilable(T::Set[Integer]))
-        return if T.must(@age_loaded_connections).include?(conn_id)
+        return if @age_loaded_connections.include?(conn_id)
 
         raw = if conn.respond_to?(:raw_connection)
                 conn.raw_connection
@@ -943,7 +941,7 @@ module ApacheAge
               end
         T.cast(raw, PG::Connection).exec("LOAD 'age'")
         T.cast(raw, PG::Connection).exec('SET search_path = ag_catalog, "$user", public')
-        T.must(@age_loaded_connections).add(conn_id)
+        @age_loaded_connections.add(conn_id)
       end
     rescue StandardError => e
       log(:warn, 'age_graph.load_age_failed', error_class: e.class.name, error_message: e.message)
@@ -965,7 +963,7 @@ module ApacheAge
       if result.is_a?(PG::Result)
         T.cast(result.first, T::Hash[String, T.untyped])['count'].to_s.to_i.positive?
       else
-        T.cast(result, T.untyped).first&.fetch('count', 0).to_i.positive?
+        T.unsafe(result).first&.fetch('count', 0).to_i.positive?
       end
     rescue StandardError
       false

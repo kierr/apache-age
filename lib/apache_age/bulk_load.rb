@@ -1,4 +1,4 @@
-# typed: strong
+# typed: strict
 # frozen_string_literal: true
 
 require 'json'
@@ -25,6 +25,7 @@ module ApacheAge
   #
   # RATIONALE: DYNAMIC-BOUNDARY: ApacheAge::BulkLoad crosses two untyped edges: pg gem RBIs declare PG::Connection#exec_params/#exec as returning T.untyped (typed shim wraps each call site to restore PG::Result), and per-label statistics hashes are T::Hash[Symbol, T.untyped] (mixed Integer/String/Float count/progress/speed values). T.untyped is the boundary type at each edge. Would need typed pg gem RBIs and a typed LabelInfo/Stats struct to remove.
   module BulkLoad
+    extend T::Sig
     CYPHER_BATCH_LIMIT = 200
     DEFAULT_BATCH_SIZE = 100_000
     ENTRY_ID_BITS = 48
@@ -65,6 +66,7 @@ module ApacheAge
     # --- GraphAdmin: graph and label lifecycle ---
 
     module GraphAdmin
+      extend T::Sig
       module_function
 
       sig { params(conn: PG::Connection, graph_name: String).void }
@@ -125,7 +127,7 @@ module ApacheAge
         # logged via ApacheAge.logger, which dispatches to SemanticLogger when available.
         ApacheAge.logger.warn(
           'age_graph.bulk_load.gin_index_ensure_failed',
-          label_name: label_name, error_class: e.class.name, error_message: e.message
+         
         )
       end
 
@@ -163,8 +165,8 @@ module ApacheAge
       def labels(conn)
         BulkLoad.query(conn,
                        'SELECT id, name, kind, relation::regclass::text AS relation, seq_name FROM ag_catalog.ag_label ORDER BY id').map do |r|
-          { id: BulkLoad.parse_int(r['id'], 10), name: T.must(r['name']), kind: T.must(r['kind']), relation: T.must(r['relation']),
-            seq_name: T.must(r['seq_name']) }
+          { id: BulkLoad.parse_int(r['id'], 10), name: r['name'], kind: r['kind'], relation: r['relation'],
+            seq_name: r['seq_name'] }
         end
       end
 
@@ -208,6 +210,7 @@ module ApacheAge
     # --- VertexLoader: bulk vertex creation ---
 
     module VertexLoader
+      extend T::Sig
       module_function
 
       # Loads vertices from _migration_pk_map into a per-label table.
@@ -292,7 +295,7 @@ module ApacheAge
                                     "SELECT new_id FROM _migration_pk_map WHERE table_name = '#{table_name}' " \
                                     "#{where} ORDER BY new_id LIMIT #{batch_size}")
           if last_row.ntuples.positive? && progress_key
-            last_new_id = T.must(last_row[last_row.ntuples - 1]['new_id'])
+            last_new_id = last_row[last_row.ntuples - 1]['new_id']
             ProgressTracker.save_progress(conn, progress_key, last_new_id, total)
           end
 
@@ -322,7 +325,7 @@ module ApacheAge
         Kernel.loop do
           # The raise guard proves progress_key non-nil here; the ternary's nil
           # branch was dead code Sorbet flagged unreachable.
-          last_uuid = ProgressTracker.load_progress(conn, T.must(progress_key))
+          last_uuid = ProgressTracker.load_progress(conn, progress_key)
           where = last_uuid ? "AND new_id > '#{escape_uuid(last_uuid)}'" : ''
           rows = BulkLoad.query(conn,
                                 "SELECT new_id FROM _migration_pk_map WHERE table_name = '#{table_name}' #{where} ORDER BY new_id LIMIT #{batch_size}")
@@ -342,7 +345,7 @@ module ApacheAge
       sig { params(conn: PG::Connection, progress_key: T.nilable(String), rows: PG::Result, total: Integer, label_name: String, batch_count: Integer).void }
       def track_vertex_progress(conn, progress_key:, rows:, total:, label_name:, batch_count:)
         last_row = rows[rows.ntuples - 1]
-        ProgressTracker.save_progress(conn, progress_key, T.must(last_row['new_id']), total) if progress_key
+        ProgressTracker.save_progress(conn, progress_key, last_row['new_id'], total) if progress_key
         ApacheAge.logger.info("[vertices] #{label_name}: #{total} rows (#{batch_count} this batch)")
       end
 
@@ -422,7 +425,7 @@ module ApacheAge
         # caller that skips it (a single quote would break out of the Cypher literal).
         escaped_type = object_type.gsub("'", "''")
         rows.each_with_index.map do |row, idx|
-          uuid = T.must(row['new_id']).gsub("'", "''")
+          uuid = row['new_id'].gsub("'", "''")
           "MERGE (v#{idx} {object_id: '#{uuid}', object_type: '#{escaped_type}'})"
         end
       end
@@ -447,6 +450,7 @@ module ApacheAge
     # --- EdgeLoader: bulk edge creation ---
 
     module EdgeLoader
+      extend T::Sig
       module_function
 
       # Bundles the stable SQL-state fields forwarded through the insert-select
@@ -457,6 +461,7 @@ module ApacheAge
       # with typed attr_readers — codebase convention for value objects
       # (Sorbet/ForbidTStruct cop gates new T::Struct usage).
       class EdgeConfig
+        extend T::Sig
         sig { returns(Integer) }
         attr_reader :label_id
 
@@ -697,7 +702,7 @@ module ApacheAge
                                   "SELECT id FROM dblink('#{dblink_conn}',
             'SELECT id FROM #{join_table} #{id_where} ORDER BY id DESC LIMIT 1')
             AS t(id uuid)")
-        ProgressTracker.save_edge_progress(conn, T.must(progress_key), T.must(last_row.first['id']), total, skipped) if last_row.ntuples.positive?
+        ProgressTracker.save_edge_progress(conn, T.must(progress_key), last_row.first['id'], total, skipped) if last_row.ntuples.positive?
       end
 
       sig do
@@ -722,7 +727,7 @@ module ApacheAge
           total += rows.ntuples
 
           last_row = rows[rows.ntuples - 1]
-          ProgressTracker.save_edge_progress(conn, T.must(progress_key), T.must(last_row['id']), total, skipped) if progress_key
+          ProgressTracker.save_edge_progress(conn, progress_key, last_row['id'], total, skipped) if progress_key
           ApacheAge.logger.info("[edges] #{edge_label} (#{join_table}): #{total} created (cypher_merge)")
           break if rows.ntuples < batch_size
         end
@@ -821,6 +826,7 @@ module ApacheAge
     # --- IdMapping: UUID to graphid resolution ---
 
     module IdMapping
+      extend T::Sig
       module_function
 
       # Builds a temp table mapping every vertex's object_id (UUID) to its AGE graphid.
@@ -896,6 +902,7 @@ module ApacheAge
     # --- ProgressTracker: resumability ---
 
     module ProgressTracker
+      extend T::Sig
       module_function
 
       sig { params(conn: PG::Connection).void }
@@ -956,7 +963,7 @@ module ApacheAge
         row = BulkLoad.query(conn, 'SELECT last_source_id FROM _age_edge_migration_progress WHERE join_table = $1', [join_table])
         return '' if row.ntuples.zero?
 
-        T.must(row.first['last_source_id'])
+        row.first['last_source_id']
       end
 
       # RATIONALE: conn.exec_params returns T.untyped from PG gem RBI — void method, return value ignored.
