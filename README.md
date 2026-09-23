@@ -151,14 +151,15 @@ ApacheAge.agtype_encode({ 'key' => 'val' })  # => '{"key": "val"}'
 
 ## Rails Integration
 
-The gem includes a Railtie that auto-configures the logger and graph name:
+The gem includes a Railtie that auto-configures the logger. Set the graph
+name in an initializer:
 
 ```ruby
-# config/application.rb
-config.apache_age.graph_name = 'my_graph'
+# config/initializers/apache_age.rb
+ApacheAge.graph_name = 'my_graph'
 ```
 
-When SemanticLogger is present, the gem uses it automatically. Otherwise it falls back to the Rails logger or stdlib Logger.
+When SemanticLogger is present, the gem uses it automatically. Otherwise it falls back to the Rails logger or stdlib Logger. The gem auto-detects ActiveRecord and reuses your connection pool — no manual `setup_connection` call is needed in a Rails app.
 
 ## Requirements
 
