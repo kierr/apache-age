@@ -215,7 +215,7 @@ module ApacheAge
       #
       # Options:
       #   strategy:     :insert_select | :copy_stdin | :cypher_merge
-      #   graph_name:   AGE graph name (e.g., 'autosis')
+      #   graph_name:   AGE graph name (e.g., 'my_graph')
       #   label_name:   per-type label (e.g., 'Person')
       #   table_name:   _migration_pk_map table_name filter (e.g., 'person_entities')
       #   object_type:  value for object_type property (e.g., 'person')
@@ -540,13 +540,13 @@ module ApacheAge
         end
       end
 
-      # Loads edges from a join table in autosis_old_restore via dblink.
+      # Loads edges from a join table in a legacy database via dblink.
       #
       # Options:
       #   strategy:     :insert_select | :cypher_merge
       #   graph_name:   AGE graph name
       #   edge_label:   edge label name (e.g., 'HAS_NAME')
-      #   dblink_conn:  dblink connection string to autosis_old_restore
+      #   dblink_conn:  dblink connection string to the legacy database
       #   join_table:   source join table name (e.g., 'person_entity_names')
       #   from_col:     FK column in join table for source entity
       #   to_col:       FK column in join table for target entity

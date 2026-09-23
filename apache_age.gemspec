@@ -6,7 +6,7 @@ require 'apache_age/version'
 Gem::Specification.new do |spec|
   spec.name          = 'apache_age'
   spec.version       = ApacheAge::VERSION
-  spec.authors       = ['ukier']
+  spec.authors       = ['kierr']
   spec.email         = []
 
   spec.summary       = 'Apache AGE graph database client for Ruby'
