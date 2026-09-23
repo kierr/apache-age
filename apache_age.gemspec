@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
   DESC
   spec.homepage      = 'https://github.com/kierr/apache-age'
   spec.license       = 'Apache-2.0'
-  spec.required_ruby_version = '>= 3.1'
+  spec.required_ruby_version = '>= 3.3'
 
   spec.metadata = {
     'homepage_uri' => spec.homepage,
@@ -33,7 +33,7 @@ Gem::Specification.new do |spec|
   spec.executables   = []
   spec.require_paths = ['lib']
 
-  spec.add_dependency 'bigdecimal', '~> 3.1'
+  spec.add_dependency 'bigdecimal', ['>= 3.1', '< 5.0']
   spec.add_dependency 'pg', '~> 1.5'
   spec.add_dependency 'sorbet-runtime', '~> 0.5'
 
