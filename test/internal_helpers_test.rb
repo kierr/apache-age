@@ -158,7 +158,7 @@ class ApacheAgeInternalHelpersTest < Minitest::Test
   end
 
   def test_build_edge_cypher
-    cypher = ApacheAge.send(:build_edge_cypher, 'from1', 'to1', 'KNOWS', { 'since' => 2020 })
+    cypher = ApacheAge.send(:build_edge_cypher, 'from1', 'to1', 'KNOWS', { 'since' => 2020 }, :directed)
     assert_includes cypher, 'from1'
     assert_includes cypher, 'to1'
     assert_includes cypher, 'KNOWS'

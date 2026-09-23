@@ -267,6 +267,22 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
                  'create_edge must not create a duplicate :Entity-labeled vertex'
   end
 
+  # directionality: :undirected creates both (a)-[e]->(b) and (b)-[e2]->(a),
+  # restoring pre-extraction semantics. :directed (the default) creates one.
+  def test_create_edge_undirected_creates_both_directions
+    v1 = new_uuid
+    v2 = new_uuid
+
+    assert_equal true, ApacheAge.send(:create_vertex, object_id: v1, object_type: 'person')
+    assert_equal true, ApacheAge.send(:create_vertex, object_id: v2, object_type: 'person')
+
+    assert_equal true, ApacheAge.create_edge(v1, v2, 'KNOWS', directionality: :undirected)
+
+    # Both directions must exist.
+    assert_equal true, ApacheAge.edge_exists?(v1, v2, 'KNOWS'), 'a->b edge missing'
+    assert_equal true, ApacheAge.edge_exists?(v2, v1, 'KNOWS'), 'b->a edge missing (undirected should create both)'
+  end
+
   private
 
   def new_uuid

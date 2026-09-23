@@ -215,13 +215,13 @@ class ApacheAgeCypherHelperTest < Minitest::Test
   # --- build_edge_cypher ---
 
   def test_build_edge_cypher_no_properties
-    result = ApacheAge.send(:build_edge_cypher, 'a', 'b', 'KNOWS', {})
+    result = ApacheAge.send(:build_edge_cypher, 'a', 'b', 'KNOWS', {}, :directed)
     assert_match(/KNOWS/, result)
     refute_match(/SET/, result)
   end
 
   def test_build_edge_cypher_with_properties
-    result = ApacheAge.send(:build_edge_cypher, 'a', 'b', 'KNOWS', { 'since' => 2020 })
+    result = ApacheAge.send(:build_edge_cypher, 'a', 'b', 'KNOWS', { 'since' => 2020 }, :directed)
     assert_match(/since/, result)
     assert_match(/2020/, result)
   end

@@ -19,3 +19,4 @@ end
 
 require 'minitest/autorun'
 require 'apache-age'
+require 'apache-age/entity'
