@@ -4,6 +4,12 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Major bumps are reviewed manually — dependabot PRs for them
+      # typically break CI (RBI drift, Ruby version requirements).
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
