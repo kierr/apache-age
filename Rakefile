@@ -18,7 +18,10 @@ namespace :sorbet do
   task(:tc) { sh 'srb tc' }
 
   desc 'Generate RBI files via Tapioca'
-  task(:rbi) { sh 'bundle exec tapioca init && bundle exec tapioca dsl && bundle exec tapioca gem' }
+  task(:rbi) do
+    sh 'bundle exec tapioca dsl'
+    sh 'bundle exec tapioca gem'
+  end
 
   desc 'Check committed RBIs are up to date (fail if tapioca gem produces diffs)'
   task :rbi_verify do

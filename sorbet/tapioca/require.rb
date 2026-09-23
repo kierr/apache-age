@@ -16,7 +16,3 @@ begin
   require 'active_support'
 rescue LoadError # optional: not installed in CI
 end
-begin
-  require 'rails'
-rescue LoadError # optional: not installed in CI
-end
