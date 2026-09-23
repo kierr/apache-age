@@ -1,0 +1,17 @@
+# Pre-push gates: catch issues locally before they hit CI.
+# Install: lefthook install (or mise handles it via lefthook in PATH)
+# Bypass: git push --no-verify (use sparingly)
+
+pre-push:
+  commands:
+    rubocop:
+      tags: lint
+      run: bundle exec rubocop --force-exclusion
+
+    typecheck:
+      tags: types
+      run: bundle exec rake sorbet:tc
+
+    tests:
+      tags: test
+      run: bundle exec rake test
