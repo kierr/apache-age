@@ -161,6 +161,27 @@ ApacheAge.graph_name = 'my_graph'
 
 When SemanticLogger is present, the gem uses it automatically. Otherwise it falls back to the Rails logger or stdlib Logger. The gem auto-detects ActiveRecord and reuses your connection pool — no manual `setup_connection` call is needed in a Rails app.
 
+## Two surfaces: driver core (autoloaded) and entity layer (opt-in)
+
+The autoloaded core (`require 'apache-age'`) is a driver matching the official
+Apache AGE driver API: graph lifecycle, `query_cypher`, agtype parsing, and
+AGE's own `Vertex`/`Edge`/`Path` domain models. This is what a general AGE
+user needs.
+
+The entity layer is opt-in for apps that model vertices as `{object_id,
+object_type}` and edges with `confidence`/`first_seen`/`last_seen` properties
+(e.g. entity-resolution / knowledge-graph apps). It adds `create_vertex`,
+`create_edge` (with `directionality:`), `traverse`/`traverse_batch`, typed
+`TraverseResult`/`EdgeTraverseResult`/`EdgeProperties`, and the other entity
+CRUD methods. Load it alongside the driver:
+
+```ruby
+require 'apache-age'
+require 'apache-age/entity'   # opt-in entity layer
+```
+
+This mirrors the existing `require 'apache-age/bulk_load'` opt-in pattern.
+
 ## Requirements
 
 - Ruby >= 3.3
