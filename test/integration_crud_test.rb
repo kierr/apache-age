@@ -237,6 +237,36 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
     assert_equal false, ApacheAge.send(:vertex_exists?, object_id: v1)
   end
 
+  # Regression: create_vertex must store object_type as a PROPERTY (not just a
+  # label) so build_traverse_cypher's `RETURN target.object_type` is non-null,
+  # and create_edge must MERGE on the existing vertex (not create a duplicate
+  # :Entity-labeled one). Before the fix, create_vertex labeled by object_type
+  # without setting the property, and create_edge used a :Entity label that
+  # couldn't find the :person vertex — so traverse returned object_type=null
+  # and two vertices existed for one object_id.
+  def test_vertex_identity_round_trips_and_no_duplicate_on_edge
+    v1 = new_uuid
+    v2 = new_uuid
+
+    assert_equal true, ApacheAge.send(:create_vertex, object_id: v1, object_type: 'person')
+    assert_equal true, ApacheAge.send(:create_vertex, object_id: v2, object_type: 'person')
+    assert_equal true, ApacheAge.send(:create_edge, v1, v2, 'KNOWS')
+
+    # object_type must round-trip through traverse (was null before the fix)
+    results = ApacheAge.send(:traverse, v1, 'KNOWS', direction: :outgoing)
+    assert_equal 1, results.length
+    assert_equal v2, results.first.entity_id
+    assert_equal 'person', results.first.object_type,
+                 'object_type must be stored as a property, not just a label'
+
+    # create_edge must MERGE on the existing vertex, not create a duplicate.
+    # Count vertices with this object_id — must be exactly 1.
+    count_cypher = "MATCH (v {object_id: '#{v1}'}) RETURN count(v) AS result"
+    rows = ApacheAge.query_cypher(count_cypher, columns: 'result ag_catalog.agtype')
+    assert_equal 1, rows.first['result'],
+                 'create_edge must not create a duplicate :Entity-labeled vertex'
+  end
+
   private
 
   def new_uuid
