@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "separateMajorMinor": false,
+  "prConcurrentLimit": 1,
+  "branchConcurrentLimit": 1,
+  "rebaseWhen": "conflicted",
+  "platformAutomerge": true,
+  "automergeStrategy": "merge-commit",
+  "packageRules": [
+    {
+      "description": "Group ALL dependency updates into a single PR",
+      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest"],
+      "groupName": "all dependencies",
+      "automerge": true
+    }
+  ]
+}
