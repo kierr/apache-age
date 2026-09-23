@@ -323,11 +323,16 @@ module ApacheAge
       validate_object_id!(object_id)
       validate_object_type!(object_type)
 
-      # RATIONALE: Vertices are labeled by object_type so MERGE finds them by
-      # {object_id, object_type}. The edge builder (build_edge_cypher) uses
-      # the same label via the object_type property stored on each vertex.
+      # RATIONALE: Vertices are matched by {object_id} alone across every query
+      # path (vertex_exists?, delete_vertex, build_edge_cypher, build_traverse_cypher)
+      # — none use a label in their MATCH pattern. Storing object_type as a property
+      # (and NOT as a label) keeps create_vertex consistent with those paths: the
+      # same MERGE finds the vertex later, instead of creating a duplicate under a
+      # different label. object_type is still queryable as `target.object_type`.
+      # Would need a typed-label scheme where EVERY path (including edge/traverse)
+      # passed from_type/to_type to switch back to label-by-type.
       cypher = <<~CYPHER
-        MERGE (v:#{object_type} {object_id: '#{cypher_escape(object_id)}'})
+        MERGE (v {object_id: '#{cypher_escape(object_id)}', object_type: '#{cypher_escape(object_type)}'})
         RETURN 1 AS result
       CYPHER
       execute_cypher(cypher)
@@ -718,14 +723,15 @@ module ApacheAge
     end
     def build_edge_cypher(from_id, to_id, label, properties)
       props_clause = build_properties_clause(properties)
-      # RATIONALE: Uses generic 'Entity' label for vertex MERGE so edges can
-      # connect vertices of any object_type. The original code used dollar_tag
-      # (random per-call label) which was broken — vertices with different
-      # random labels could never be found by MERGE. Would need from_type/to_type
-      # parameters to use typed labels matching create_vertex's object_type label.
+      # RATIONALE: Match by {object_id} with no label, matching create_vertex's
+      # MERGE pattern. The prior `:Entity` label created DUPLICATE vertices when
+      # the source had been created by create_vertex (which labeled by object_type):
+      # MERGE (a:Entity {...}) cannot find a vertex labeled `:person`, so it made
+      # a new one. Label-less match finds the existing vertex regardless of label.
+      # Would need from_type/to_type params to use typed labels consistently.
       <<~CYPHER
-        MERGE (a:Entity {object_id: '#{cypher_escape(from_id)}'})
-        MERGE (b:Entity {object_id: '#{cypher_escape(to_id)}'})
+        MERGE (a {object_id: '#{cypher_escape(from_id)}'})
+        MERGE (b {object_id: '#{cypher_escape(to_id)}'})
         MERGE (a)-[e:#{label}#{props_clause}]->(b)
         RETURN 1 AS result
       CYPHER
