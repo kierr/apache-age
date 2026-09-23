@@ -283,6 +283,31 @@ class ApacheAgeCrudIntegrationTest < Minitest::Test
     assert_equal true, ApacheAge.edge_exists?(v2, v1, 'KNOWS'), 'b->a edge missing (undirected should create both)'
   end
 
+  # traverse_multihop: iterative BFS up to max_depth with cycle dedup.
+  # Build a 3-hop chain a -> b -> c -> d and assert depth + reachable set.
+  def test_traverse_multihop_depths_and_cycle_dedup
+    a = new_uuid
+    b = new_uuid
+    c = new_uuid
+    d = new_uuid
+
+    [a, b, c, d].each { |id| ApacheAge.send(:create_vertex, object_id: id, object_type: 'person') }
+    ApacheAge.create_edge(a, b, 'KNOWS')
+    ApacheAge.create_edge(b, c, 'KNOWS')
+    ApacheAge.create_edge(c, d, 'KNOWS')
+    # Cycle: d -> a, which must NOT cause unbounded traversal.
+    ApacheAge.create_edge(d, a, 'KNOWS')
+
+    results = ApacheAge.traverse_multihop(a, 'KNOWS', direction: :outgoing, max_depth: 5)
+    oids = results.map { |r| r[:object_id] }
+    assert_equal [b, c, d].sort, oids.sort, 'should reach b, c, d from a (not a itself)'
+    depths = results.to_h { |r| [r[:object_id], r[:depth]] }
+    assert_equal 1, depths[b], 'b at depth 1'
+    assert_equal 2, depths[c], 'c at depth 2'
+    assert_equal 3, depths[d], 'd at depth 3'
+    assert_equal 3, results.length, 'cycle d->a must not add duplicates'
+  end
+
   private
 
   def new_uuid

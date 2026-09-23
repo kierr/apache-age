@@ -333,6 +333,88 @@ module ApacheAge
       " {#{parts.join(', ')}}"
     end
 
+    # --- Multi-hop BFS traversal ---
+
+    # Iterative breadth-first traversal up to max_depth hops. Returns one
+    # entry per reachable object_id with the hop depth and direction at which it
+    # was first reached. Deduplicates across hops via a visited set so graph
+    # cycles cannot cause unbounded work. direction :both runs outgoing and
+    # incoming and merges them (AGE emits one arrow shape per query, so the
+    # union is taken in Ruby). Each entry is a Hash with :object_id,
+    # :object_type, :depth, :direction (direction is a string).
+    sig do
+      params(
+        start_object_id: String, edge_label: String,
+        direction: Symbol, max_depth: Integer
+      ).returns(T::Array[T::Hash[Symbol, T.untyped]])
+    end
+    def traverse_multihop(start_object_id, edge_label, direction:, max_depth:)
+      if direction == :both
+        outgoing = run_multihop(start_object_id, edge_label, :outgoing, max_depth)
+        incoming = run_multihop(start_object_id, edge_label, :incoming, max_depth)
+        merge_both_directions(outgoing, incoming)
+      else
+        run_multihop(start_object_id, edge_label, direction, max_depth)
+      end
+    end
+
+    sig { params(start_object_id: String, edge_label: String, direction: Symbol, max_depth: Integer).returns(T::Array[T::Hash[Symbol, T.untyped]]) }
+    def run_multihop(start_object_id, edge_label, direction, max_depth)
+      visited = T.let(Set.new([start_object_id]), T::Set[String])
+      frontier = T.let([start_object_id], T::Array[String])
+      results = T.let([], T::Array[T::Hash[Symbol, T.untyped]])
+
+      max_depth.times do |depth_i|
+        depth = depth_i + 1
+        break if frontier.empty?
+
+        batch = traverse_batch(frontier, edge_label, direction: direction)
+        frontier = expand_frontier(batch, visited, depth, direction, results)
+      end
+
+      results
+    end
+
+    sig do
+      params(
+        batch: T::Array[T.untyped],
+        visited: T::Set[String],
+        depth: Integer,
+        direction: Symbol,
+        results: T::Array[T::Hash[Symbol, T.untyped]]
+      ).returns(T::Array[String])
+    end
+    def expand_frontier(batch, visited, depth, direction, results)
+      next_frontier = T.let([], T::Array[String])
+      batch.each do |tr|
+        result = T.cast(tr, ApacheAge::TraverseResult)
+        next if visited.include?(result.entity_id)
+
+        visited.add(result.entity_id)
+        next_frontier << result.entity_id
+        results.push(object_id: result.entity_id, object_type: result.object_type, depth: depth, direction: direction.to_s)
+      end
+      next_frontier
+    end
+
+    sig { params(outgoing: T::Array[T::Hash[Symbol, T.untyped]], incoming: T::Array[T::Hash[Symbol, T.untyped]]).returns(T::Array[T::Hash[Symbol, T.untyped]]) }
+    def merge_both_directions(outgoing, incoming)
+      by_oid = T.let({}, T::Hash[String, T::Hash[Symbol, T.untyped]])
+      outgoing.each do |r|
+        oid = T.cast(r[:object_id], String)
+        by_oid[oid] = r
+      end
+      incoming.each do |r|
+        oid = T.cast(r[:object_id], String)
+        if by_oid.key?(oid)
+          T.must(by_oid[oid])[:direction] = 'both'
+        else
+          by_oid[oid] = r
+        end
+      end
+      by_oid.values
+    end
+
     # --- Parsers ---
 
     sig { params(result: T.untyped).returns(T::Array[EdgeTraverseResult]) }
@@ -395,6 +477,7 @@ module ApacheAge
             :traverse_columns,
             :parse_edge_traverse_results, :parse_traverse_results,
             :parse_forward_traverse_results, :parse_reverse_traverse_results,
-            :build_properties_clause
+            :build_properties_clause,
+            :run_multihop, :expand_frontier, :merge_both_directions
   end
 end
