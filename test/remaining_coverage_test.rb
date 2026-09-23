@@ -3,7 +3,7 @@
 
 require_relative 'test_helper'
 
-# Unit tests for remaining uncovered paths in apache_age.rb helpers
+# Unit tests for remaining uncovered paths in apache-age.rb helpers
 # and edge cases not exercised by other tests.
 
 class ApacheAgeRemainingCoverageTest < Minitest::Test

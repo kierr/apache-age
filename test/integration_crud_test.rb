@@ -5,7 +5,7 @@ require 'securerandom'
 require_relative 'test_helper'
 
 # CRUD integration tests against real PostgreSQL + AGE.
-# These exercise the graph manipulation API paths in apache_age.rb
+# These exercise the graph manipulation API paths in apache-age.rb
 # now that the Cypher column bugs are fixed.
 
 class ApacheAgeCrudIntegrationTest < Minitest::Test

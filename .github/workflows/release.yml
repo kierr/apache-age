@@ -22,7 +22,7 @@ jobs:
           bundler-cache: true
 
       - name: Build gem
-        run: gem build apache_age.gemspec
+        run: gem build apache-age.gemspec
 
       - name: Publish to RubyGems
         uses: rubygems/release-gem@v1
