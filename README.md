@@ -1,8 +1,8 @@
 # apache-age
 
-A Ruby driver for [Apache AGE](https://age.apache.org/), the PostgreSQL extension for graph databases.
+A Ruby driver for [Apache AGE](https://age.apache.org/), the PostgreSQL extension for graph databases. Abstracted from a large rails monolith, used in production (NOT aspirational vibe-slop!)
 
-Provides agtype parsing, graph lifecycle management, Cypher query execution with parameterized statements, and Vertex/Edge/Path domain models. Matches the API surface of the official Python, Node.js, Go, and JDBC drivers.
+Provides agtype parsing, graph lifecycle management, Cypher query execution with parameterized statements, and Vertex/Edge/Path domain models.
 
 ## Installation
 
